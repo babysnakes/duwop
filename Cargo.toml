@@ -1,0 +1,7 @@
+[package]
+name = "duwop"
+version = "0.1.0"
+authors = ["Haim Ashkenazi <haim@babysnakes.org>"]
+edition = "2018"
+
+[dependencies]
