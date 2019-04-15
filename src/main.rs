@@ -1,9 +1,12 @@
 mod dns_server;
 
 use dns_server::DNSServer;
+use env_logger;
+use log::info;
 
 fn main() {
-    println!("Starting...");
+    env_logger::init();
+    info!("Starting...");
     let server = DNSServer { port: 8053 };
     server.run();
 }

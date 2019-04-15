@@ -1,6 +1,12 @@
+use log::{debug, error, info, warn};
+use std::io::Result;
 use std::net::*;
-use std::str::FromStr;
-use trust_dns_server::authority::*;
+use trust_dns::op::{Header, MessageType, OpCode, ResponseCode};
+use trust_dns::rr::{Name, RData, Record, RecordType};
+use trust_dns_proto::rr::RrsetRecords;
+use trust_dns_server::authority::authority::LookupRecords;
+use trust_dns_server::authority::{AuthLookup, MessageRequest, MessageResponseBuilder};
+use trust_dns_server::server::*;
 use trust_dns_server::ServerFuture;
 
 const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
@@ -15,86 +21,122 @@ impl DNSServer {
     use tokio::runtime::current_thread::Runtime;
     use tokio_udp::*;
 
-    let catalog = new_catalog();
     let addr = SocketAddr::from((LOCALHOST, self.port));
-    let server = ServerFuture::new(catalog);
+    let handler = DNSHandler {};
+    let server = ServerFuture::new(handler);
     let udp_socket = UdpSocket::bind(&addr).expect("error binding to UDP");
     let mut io_loop = Runtime::new().expect("error creating tokio runtime");
 
     let server_future: Box<Future<Item = (), Error = ()> + Send> =
       Box::new(future::lazy(move || {
-        println!("binding UDP socket");
+        info!("binding UDP socket");
         server.register_socket(udp_socket);
         future::empty()
       }));
-      io_loop.block_on(server_future).unwrap()
+    io_loop.block_on(server_future).unwrap()
   }
 }
 
-fn new_catalog() -> Catalog {
-  let dot_test_domain = create_dot_test_domain();
-  let origin = dot_test_domain.origin().clone();
-  let mut catalog = Catalog::new();
-  catalog.upsert(origin, dot_test_domain);
-  catalog
+pub struct DNSHandler;
+
+impl DNSHandler {
+  fn resolve<'q, R: ResponseHandler + 'static>(
+    &self,
+    request: &'q MessageRequest,
+    response_handle: R,
+  ) -> Result<()> {
+    // for now we only care about first request
+    // TODO better handle no queries
+    let query = request
+      .queries()
+      .get(0)
+      .expect("failed to get first query from dns request");
+    let mut response = MessageResponseBuilder::new(Some(request.raw_queries()));
+    let name = query.name().to_string();
+    if !name.ends_with("test.") {
+      warn!("we don't handle this domain");
+      return response_handle.send_response(response.error_msg(
+        request.id(),
+        request.op_code(),
+        ResponseCode::NXDomain,
+      ));
+    }
+
+    debug!("first query is {}", name);
+    // TODO: TSIG?
+    let record = match query.query_type() {
+      RecordType::A => Record::from_rdata(
+        Name::from(query.name().clone()),
+        0,
+        RecordType::A,
+        RData::A(Ipv4Addr::LOCALHOST),
+      ),
+      RecordType::AAAA => Record::from_rdata(
+        Name::from(query.name().clone()),
+        0,
+        RecordType::AAAA,
+        RData::AAAA(Ipv6Addr::LOCALHOST),
+      ),
+      query_type => {
+        warn!(
+          "received unsupported query type ({:?}) for {}",
+          query_type, name
+        );
+        return response_handle.send_response(response.error_msg(
+          request.id(),
+          request.op_code(),
+          ResponseCode::NXRRSet,
+        ));
+      }
+    };
+    let record_vec = vec![record];
+    let ro = RrsetRecords::RecordsOnly(record_vec.iter());
+    let records = LookupRecords::RecordsIter(ro);
+    let answer = AuthLookup::Records(records);
+    let mut response_header = Header::new();
+    response_header.set_id(request.id());
+    response_header.set_op_code(OpCode::Query);
+    response_header.set_message_type(MessageType::Response);
+    response_header.set_response_code(ResponseCode::NoError);
+    response_header.set_authoritative(true);
+    response_header.set_recursion_available(false);
+    response.answers(answer);
+    return response_handle.send_response(response.build(response_header));
+  }
 }
 
-// Generate the ".test" domain data.
-fn create_dot_test_domain() -> Authority {
-  use std::collections::BTreeMap;
-  use trust_dns::rr::rdata::SOA;
-  use trust_dns::rr::*;
+impl RequestHandler for DNSHandler {
+  fn handle_request<'q, 'a, R: ResponseHandler + 'static>(
+    &'a self,
+    request: &'q Request,
+    response_handle: R,
+  ) -> Result<()> {
+    let message = &request.message;
+    debug!("req: {:?}", &message);
 
-  let origin: Name = Name::from_str("test.").expect("error origin");
+    // TODO: should we check for EDNS?
 
-  let mut dot_test_records: Authority = Authority::new(
-    origin.clone(),
-    BTreeMap::new(),
-    ZoneType::Master,
-    false,
-    false,
-    false,
-  );
-  // SOA - not sure if we really need it.
-  dot_test_records.upsert(
-    Record::new()
-      .set_name(origin.clone())
-      .set_ttl(86400)
-      .set_rr_type(RecordType::SOA)
-      .set_dns_class(DNSClass::IN)
-      .set_rdata(RData::SOA(SOA::new(
-        Name::from_str("duwop.test").unwrap(),
-        Name::from_str("admin.duwop.test").unwrap(),
-        2019041501,
-        7200,
-        3600,
-        360000,
-        86400,
-      )))
-      .clone(),
-    0,
-  );
-  // NS, not sure if we need it either.
-  dot_test_records.upsert(
-    Record::new()
-      .set_name(origin.clone())
-      .set_ttl(86400)
-      .set_rr_type(RecordType::NS)
-      .set_dns_class(DNSClass::IN)
-      .set_rdata(RData::NS(Name::from_str("ns1.duwop.test").unwrap()))
-      .clone(),
-    0,
-  );
-  // Finally, the single address
-  dot_test_records.upsert(
-    Record::new()
-      .set_name(Name::from_str("*.test.").unwrap())
-      .set_ttl(68400)
-      .set_rr_type(RecordType::A)
-      .set_dns_class(DNSClass::IN)
-      .set_rdata(RData::A(LOCALHOST))
-      .clone(),
-    0,
-  );
-  dot_test_records
+    let response = MessageResponseBuilder::new(Some(message.raw_queries()));
+    match message.message_type() {
+      MessageType::Query => match message.op_code() {
+        OpCode::Query => return self.resolve(message, response_handle),
+        code => {
+          error!("unimplemented opcode: {:?}", code);
+          return response_handle.send_response(response.error_msg(
+            message.id(),
+            message.op_code(),
+            ResponseCode::NotImp,
+          ));
+        }
+      },
+      MessageType::Response => {
+        warn!("got a response as request from id: {}", message.id());
+        return response_handle.send_response(response.error_msg(
+          message.id(),
+          message.op_code(),
+          ResponseCode::FormErr,
+        ));
+      }
+    }
+  }
 }
