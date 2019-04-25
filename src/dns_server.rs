@@ -1,14 +1,15 @@
-use log::{debug, error, info, warn};
-use std::net::*;
+use log::{debug, info};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
-use trust_dns_server::authority::{Catalog, Authority, ZoneType};
-use trust_dns_server::ServerFuture;
+use trust_dns_server::authority::{Authority, Catalog, ZoneType};
 use trust_dns_server::store::in_memory::InMemoryAuthority;
+use trust_dns_server::ServerFuture;
 
 const LOCALHOST: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 
 pub struct DNSServer {
   pub port: u16,
+  pub subdomains: Vec<String>,
 }
 
 impl DNSServer {
@@ -17,7 +18,13 @@ impl DNSServer {
     use tokio_udp::*;
 
     let addr = SocketAddr::from((LOCALHOST, self.port));
-    let catalog = new_catalog();
+    let mut catalog = Catalog::new();
+    info!("Adding '.info' domain");
+    add_to_catalog(&mut catalog, "test.");
+    for sub_domain in &self.subdomains {
+      info!("Adding '{}' domain", &sub_domain);
+      add_to_catalog(&mut catalog, &sub_domain);
+    }
     let server = ServerFuture::new(catalog);
     let udp_socket = UdpSocket::bind(&addr).expect("error binding to UDP");
 
@@ -32,27 +39,27 @@ impl DNSServer {
   }
 }
 
-fn new_catalog() -> Catalog {
-  let dot_test_domain = create_dot_test_domain();
+fn add_to_catalog(catalog: &mut Catalog, domain: &str) {
+  let dot_test_domain = generate_domain(domain);
   let origin = dot_test_domain.origin().clone();
-  let mut catalog = Catalog::new();
   catalog.upsert(origin, Box::new(dot_test_domain));
-  catalog
 }
 
 // Generate the ".test" domain data.
-fn create_dot_test_domain() -> InMemoryAuthority {
+fn generate_domain(domain: &str) -> InMemoryAuthority {
   use trust_dns::rr::rdata::SOA;
   use trust_dns::rr::*;
 
-  let origin: Name = Name::from_str("test.").expect("error origin");
+  let origin: Name = Name::from_str(domain).expect("error origin");
+  let mname = format!("duwop.{}", domain);
+  let rname = format!("admin.duwop.{}", domain);
+  let ns1 = format!("ns1.duwop.{}", domain);
+  let wildcard = format!("*.{}", domain);
 
-  let mut dot_test_records: InMemoryAuthority = InMemoryAuthority::empty(
-    origin.clone(),
-    ZoneType::Master,
-    false,
-  );
+  let mut dot_test_records: InMemoryAuthority =
+    InMemoryAuthority::empty(origin.clone(), ZoneType::Master, false);
   // SOA - not sure if we really need it.
+  debug!("generating SOA record for {}", &domain);
   dot_test_records.upsert(
     Record::new()
       .set_name(origin.clone())
@@ -60,8 +67,8 @@ fn create_dot_test_domain() -> InMemoryAuthority {
       .set_rr_type(RecordType::SOA)
       .set_dns_class(DNSClass::IN)
       .set_rdata(RData::SOA(SOA::new(
-        Name::from_str("duwop.test").unwrap(),
-        Name::from_str("admin.duwop.test").unwrap(),
+        Name::from_str(&mname).unwrap(),
+        Name::from_str(&rname).unwrap(),
         2019041501,
         7200,
         3600,
@@ -72,30 +79,22 @@ fn create_dot_test_domain() -> InMemoryAuthority {
     0,
   );
   // NS, not sure if we need it either.
+  debug!("generating NS record for {}", &domain);
   dot_test_records.upsert(
     Record::new()
       .set_name(origin.clone())
       .set_ttl(86400)
       .set_rr_type(RecordType::NS)
       .set_dns_class(DNSClass::IN)
-      .set_rdata(RData::NS(Name::from_str("ns1.duwop.test").unwrap()))
+      .set_rdata(RData::NS(Name::from_str(&ns1).unwrap()))
       .clone(),
     0,
   );
   // Finally, the single address
+  debug!("generating wildcard record for {}", &domain);
   dot_test_records.upsert(
     Record::new()
-      .set_name(Name::from_str("*.test.").unwrap())
-      .set_ttl(68400)
-      .set_rr_type(RecordType::A)
-      .set_dns_class(DNSClass::IN)
-      .set_rdata(RData::A(LOCALHOST))
-      .clone(),
-    0,
-  );
-  dot_test_records.upsert(
-    Record::new()
-      .set_name(Name::from_str("*.*.test.").unwrap())
+      .set_name(Name::from_str(&wildcard).unwrap())
       .set_ttl(68400)
       .set_rr_type(RecordType::A)
       .set_dns_class(DNSClass::IN)
