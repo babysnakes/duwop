@@ -1,3 +1,4 @@
+use futures::{future, Future};
 use log::{debug, info};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::str::FromStr;
@@ -13,8 +14,7 @@ pub struct DNSServer {
 }
 
 impl DNSServer {
-  pub fn run(&self) {
-    use futures::{future, Future};
+  pub fn run(&self) -> Box<Future<Item = (), Error = ()> + Send> {
     use tokio_udp::*;
 
     let addr = SocketAddr::from((LOCALHOST, self.port));
@@ -28,14 +28,11 @@ impl DNSServer {
     let server = ServerFuture::new(catalog);
     let udp_socket = UdpSocket::bind(&addr).expect("error binding to UDP");
 
-    let server_future: Box<Future<Item = (), Error = ()> + Send> =
-      Box::new(future::lazy(move || {
-        info!("binding UDP socket");
-        server.register_socket(udp_socket);
-        future::empty()
-      }));
-    tokio::run(server_future);
-    // tokio::spawn(server_future);
+    Box::new(future::lazy(move || {
+      info!("binding UDP socket");
+      server.register_socket(udp_socket);
+      future::empty()
+    }))
   }
 }
 
