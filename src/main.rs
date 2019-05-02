@@ -1,20 +1,19 @@
-mod dns_server;
+mod dns;
 
-use dns_server::DNSServer;
+use dns::DNSServer;
+
 use env_logger;
-use futures::future;
-use log::info;
+use futures::future::{self, Future};
+use log::{error, info};
 
 fn main() {
     env_logger::init();
     info!("Starting...");
-    let server = DNSServer {
-        port: 8053,
-        subdomains: vec!["example.test".to_string()],
-    }
-    .run();
+    let dns_server = DNSServer::new(8053);
     tokio::run(future::lazy(|| {
-        tokio::spawn(server);
+        tokio::spawn(dns_server.map_err(|err| {
+            error!("DNS Server error: {:?}", err);
+        }));
         Ok(())
     }));
 }

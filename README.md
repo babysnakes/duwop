@@ -21,4 +21,12 @@ It should have the following characteristics:
 * Possibly SSL termination without having to hassle with invalid certificates.
   Check [puma dev][pd] for example how to perform this.
 
+## Contributors
+
+* Big credit goes to [Emil Hernvall][emil] for his great [dnsguide][]. The
+  entire DNS implementation is copied (with slight modifications) from his guide
+  with his permission.
+
 [pd]: https://github.com/puma/puma-dev
+[emil]: https://github.com/EmilHernvall
+[dnsguide]: https://github.com/EmilHernvall/dnsguide
