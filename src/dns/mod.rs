@@ -17,10 +17,10 @@ pub struct DNSServer {
 }
 
 impl DNSServer {
-  pub fn new(port: u16) -> DNSServer {
+  pub fn new(port: u16) -> Result<DNSServer> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let socket = UdpSocket::bind(&addr).unwrap(); // let it panic if failed
-    DNSServer { socket: socket }
+    let socket = UdpSocket::bind(&addr)?;
+    Ok(DNSServer { socket: socket })
   }
 }
 

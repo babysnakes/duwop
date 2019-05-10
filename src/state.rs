@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{BufReader, Result};
 use std::sync::{Arc, RwLock};
 
-use log::{debug};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
@@ -26,6 +26,7 @@ impl AppState {
   }
 
   pub fn load_from_saved(&mut self, path: &str) -> Result<()> {
+    info!("loading state from db ({})", path);
     let f = File::open(path)?;
     let reader = BufReader::new(f);
     self.services = serde_json::from_reader(reader)?;
