@@ -21,6 +21,10 @@ It should have the following characteristics:
 * Possibly SSL termination without having to hassle with invalid certificates.
   Check [puma dev][pd] for example how to perform this.
 
+## Development environment setup
+
+Copy `.env-sample` in the current directory to `.env` and edit to your liking.
+
 ## Contributors
 
 * Big credit goes to [Emil Hernvall][emil] for his great [dnsguide][]. The
