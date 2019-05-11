@@ -1,0 +1,8 @@
+{
+  "key1": {
+    "StaticFiles": "/path/to/directory"
+  },
+  "key2": {
+    "StaticFiles": "/path/to/directory"
+  }
+}

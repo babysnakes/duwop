@@ -23,7 +23,9 @@ It should have the following characteristics:
 
 ## Development environment setup
 
-Copy `.env-sample` in the current directory to `.env` and edit to your liking.
+* Copy `.env-sample` in the current directory to `.env` and edit to your liking.
+* Copy `devstate-sample.json` to `devstate.json` (or any other name and update
+  the `.env` file) and edit keys with paths for static serving.
 
 ## Contributors
 

@@ -1,5 +1,6 @@
 mod dns;
 mod state;
+mod web;
 
 use dns::DNSServer;
 use state::AppState;
@@ -30,12 +31,16 @@ fn run() -> Result<(), Error> {
     let path = env::var("APP_STATE_DB")?;
     let dns_port_env = env::var("DNS_PORT").unwrap_or("8053".to_string());
     let dns_port: u16 = dns_port_env.parse()?;
-    let _app_state = AppState::load(&path)?;
+    let http_port_env = env::var("HTTP_PORT").unwrap_or("80".to_string());
+    let http_port: u16 = http_port_env.parse()?;
+    let app_state = AppState::load(&path)?;
     let dns_server = DNSServer::new(dns_port)?;
+    let web_server = web::new_server(http_port, app_state);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
         }));
+        tokio::spawn(web_server);
         Ok(())
     }));
     Ok(())
