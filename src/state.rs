@@ -4,14 +4,18 @@ use std::io::{BufReader, Result};
 use std::sync::{Arc, RwLock};
 
 use log::{debug, info};
-use serde::{Deserialize, Serialize};
+use serde::{self, Deserialize, Serialize};
 use serde_json;
+use url::Url;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub enum ServiceType {
   StaticFiles(String),
+  #[serde(with = "url_serde")]
+  ReverseProxy(Url),
 }
 
+#[derive(Debug)]
 pub struct AppState {
   pub services: HashMap<String, ServiceType>,
 }

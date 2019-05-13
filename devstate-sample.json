@@ -4,5 +4,6 @@
   },
   "key2": {
     "StaticFiles": "/path/to/directory"
-  }
+  },
+  "local5000": { "ReverseProxy": "http://localhost:5000/" }
 }
