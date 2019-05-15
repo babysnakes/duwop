@@ -9,7 +9,7 @@ use std::env;
 
 use dotenv;
 use env_logger;
-use failure::Error;
+use failure::{Error};
 use futures::future::{self, Future};
 use log::{error, info};
 
@@ -19,7 +19,10 @@ fn main() {
             info!("Stopping...");
         },
         Err(err) => {
-            error!("encountered error: {}", err);
+            error!("{}", err);
+            for cause in err.iter_causes() {
+                error!("{}", cause);
+            }
         }
     }
 }
