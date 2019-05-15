@@ -3,14 +3,18 @@ name = "duwop"
 version = "0.1.0"
 authors = ["Haim Ashkenazi <haim@babysnakes.org>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 tokio = "0.1"
+tokio-fs = "0.1.6"
+tokio-io = "0.1.12"
 futures = "0.1.26"
 
 hyper = "0.12.28"
-hyper-staticfile = "0.3.1"
 hyper-reverse-proxy = "0.4.0"
+http = "0.1.17"
+mime = "0.3.13"
 url = "1.7.2"
 url_serde = "0.2.0"
 
@@ -18,6 +22,7 @@ serde = { version = "1.0.91", features = ["derive"]}
 serde_json = "1.0.39"
 
 failure = "0.1.5"
+failure_derive = "0.1.5"
 log = "0.4.6"
 env_logger = "0.6.1"
 dotenv = "0.14.0"

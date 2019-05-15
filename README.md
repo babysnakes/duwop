@@ -32,7 +32,11 @@ It should have the following characteristics:
 * Big credit goes to [Emil Hernvall][emil] for his great [dnsguide][]. The
   entire DNS implementation is copied (with slight modifications) from his guide
   with his permission.
+* The [basic-http-server][bhttp] project. The base of the static files serving
+  code is copied from this project.
+
 
 [pd]: https://github.com/puma/puma-dev
 [emil]: https://github.com/EmilHernvall
 [dnsguide]: https://github.com/EmilHernvall/dnsguide
+[bhttp]: https://github.com/brson/basic-http-server

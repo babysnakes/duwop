@@ -1,6 +1,9 @@
+mod static_files;
+
 use super::state::{AppState, ServiceType};
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use failure::Error;
@@ -9,14 +12,14 @@ use futures::future;
 use hyper::header::HOST;
 use hyper::{Body, Request, Response, Server};
 use hyper_reverse_proxy;
-use hyper_staticfile::{Static, StaticFuture};
 
 use log::{debug, error, info};
 
 type BoxFut = Box<Future<Item=Response<Body>, Error=hyper::Error> + Send>;
+type StaticFuture = Box<Future<Item=Response<Body>, Error=Error> + Send>;
 
 enum MainFuture {
-  Static(StaticFuture<Body>),
+  Static(StaticFuture),
   ReverseProxy(BoxFut)
 }
 
@@ -59,8 +62,7 @@ impl hyper::service::Service for MainService {
       None => unimplemented!(),
       Some(service) => match service {
         ServiceType::StaticFiles(path) => {
-          let static_ = Static::new(path);
-          MainFuture::Static(static_.serve(req))
+          MainFuture::Static(Box::new(static_files::serve(req, &PathBuf::from(path))))
         },
         ServiceType::ReverseProxy(url) => {
           MainFuture::ReverseProxy(hyper_reverse_proxy::call([127, 0, 0, 1].into(), &url.as_str(), req))
