@@ -9,7 +9,7 @@ use std::env;
 
 use dotenv;
 use env_logger;
-use failure::{Error};
+use failure::Error;
 use futures::future::{self, Future};
 use log::{error, info};
 
@@ -17,7 +17,7 @@ fn main() {
     match run() {
         Ok(_) => {
             info!("Stopping...");
-        },
+        }
         Err(err) => {
             error!("{}", err);
             for cause in err.iter_causes() {
