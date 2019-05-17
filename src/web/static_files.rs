@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use super::errors::*;
+
 use failure::Error;
 use futures::{future::Either, Future};
 use http::status::StatusCode;
@@ -17,9 +19,9 @@ pub(super) fn serve(
         Either::A(tokio_fs::file::File::open(path.clone()).then(
             move |open_result| match open_result {
                 Ok(file) => Either::A(read_file(file, path)),
-                // Since local_path_for_request verifies that the file exists any
-                // io::error is internal server error.
-                Err(_) => Either::B(internal_server_error()),
+                // Since local_path_for_request verifies that the file exists
+                // any other io::error is internal server error.
+                Err(err) => Either::B(internal_server_error(Error::from(err))),
             },
         ))
     } else {
@@ -104,25 +106,6 @@ fn local_path_for_request(request_path: &str, root_dir: &Path) -> Option<PathBuf
             None
         }
     }
-}
-
-fn handle_404() -> impl Future<Item = Response<Body>, Error = Error> {
-    futures::future::result(
-        Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .body(Body::empty())
-            .map_err(Error::from),
-    )
-}
-
-fn internal_server_error() -> impl Future<Item = Response<Body>, Error = Error> {
-    futures::future::result(
-        Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .header(header::CONTENT_LENGTH, 0)
-            .body(Body::empty()),
-    )
-    .map_err(Error::from)
 }
 
 #[cfg(test)]
