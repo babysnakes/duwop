@@ -5,16 +5,24 @@ mod web;
 use dns::DNSServer;
 use state::AppState;
 
-use std::env;
-
 use dotenv;
 use env_logger;
 use failure::Error;
 use futures::future::{self, Future};
-use log::{error, info};
+use log::{debug, error, info};
+
+#[derive(Debug)]
+struct Opt {
+    dns_port: u16,
+    web_port: u16,
+    state_path: String,
+}
 
 fn main() {
-    match run() {
+    dotenv::dotenv().ok();
+    env_logger::init();
+    let opt = parse_options();
+    match run(opt) {
         Ok(_) => {
             info!("Stopping...");
         }
@@ -27,18 +35,59 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Error> {
-    dotenv::dotenv().ok();
-    env_logger::init();
+fn parse_options() -> Opt {
+    use clap::{value_t, App, Arg};
+
+    let default_dns_port = "9053";
+    let default_web_port = "80";
+    let static_file_relative = ".duwop/state.json";
+    let dns_port_opt = "dns-port";
+    let web_port_opt = "web-port";
+    let state_file_opt = "state-file";
+
+    let matches = App::new("duwop")
+        .version("0.1")
+        .about("Web serve local directories and proxy local ports on default http port and real DNS names.")
+        .args(&[
+            Arg::with_name(dns_port_opt)
+                .long(dns_port_opt)
+                .help("The dns port to listen on (UDP)")
+                .value_name("PORT")
+                .takes_value(true)
+                .default_value(default_dns_port)
+                .env("DNS_PORT"),
+            Arg::with_name(web_port_opt)
+                .long(web_port_opt)
+                .help("The port to listen for web requests")
+                .value_name("PORT")
+                .takes_value(true)
+                .default_value(default_web_port)
+                .env("HTTP_PORT"),
+            Arg::with_name(state_file_opt)
+                .long(state_file_opt)
+                .help("Alternative of state file (absolute or relative to home directory)")
+                .value_name("FILE")
+                .takes_value(true)
+                .env("APP_STATE_DB"),
+        ])
+        .get_matches();
+
+    Opt {
+        dns_port: value_t!(matches.value_of(dns_port_opt), u16).unwrap_or_else(|e| e.exit()),
+        web_port: value_t!(matches.value_of(web_port_opt), u16).unwrap_or_else(|e| e.exit()),
+        state_path: matches
+            .value_of(state_file_opt)
+            .unwrap_or(static_file_relative)
+            .to_string(),
+    }
+}
+
+fn run(opt: Opt) -> Result<(), Error> {
     info!("Starting...");
-    let path = env::var("APP_STATE_DB")?;
-    let dns_port_env = env::var("DNS_PORT").unwrap_or("8053".to_string());
-    let dns_port: u16 = dns_port_env.parse()?;
-    let http_port_env = env::var("HTTP_PORT").unwrap_or("80".to_string());
-    let http_port: u16 = http_port_env.parse()?;
-    let app_state = AppState::load(&path)?;
-    let dns_server = DNSServer::new(dns_port)?;
-    let web_server = web::new_server(http_port, app_state);
+    debug!("running with options: {:#?}", opt);
+    let app_state = AppState::load(&opt.state_path)?;
+    let dns_server = DNSServer::new(opt.dns_port)?;
+    let web_server = web::new_server(opt.web_port, app_state);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
