@@ -16,6 +16,7 @@ struct Opt {
     dns_port: u16,
     web_port: u16,
     state_path: String,
+    launchd: bool,
 }
 
 fn main() {
@@ -44,9 +45,10 @@ fn parse_options() -> Opt {
     let dns_port_opt = "dns-port";
     let web_port_opt = "web-port";
     let state_file_opt = "state-file";
+    let launchd_opt = "launchd";
 
     let matches = App::new("duwop")
-        .version("0.1")
+        .version("0.1-alpha")
         .about("Web serve local directories and proxy local ports on default http port and real DNS names.")
         .args(&[
             Arg::with_name(dns_port_opt)
@@ -69,6 +71,9 @@ fn parse_options() -> Opt {
                 .value_name("FILE")
                 .takes_value(true)
                 .env("APP_STATE_DB"),
+            Arg::with_name(launchd_opt)
+                .long(launchd_opt)
+                .help("Enable launchd socket (for running on mac in port 80)"),
         ])
         .get_matches();
 
@@ -79,6 +84,7 @@ fn parse_options() -> Opt {
             .value_of(state_file_opt)
             .unwrap_or(static_file_relative)
             .to_string(),
+        launchd: matches.is_present(launchd_opt),
     }
 }
 
@@ -87,7 +93,7 @@ fn run(opt: Opt) -> Result<(), Error> {
     debug!("running with options: {:#?}", opt);
     let app_state = AppState::load(&opt.state_path)?;
     let dns_server = DNSServer::new(opt.dns_port)?;
-    let web_server = web::new_server(opt.web_port, app_state);
+    let web_server = web::new_server(opt.web_port, opt.launchd, app_state);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);

@@ -4,7 +4,7 @@ mod static_files;
 use super::state::{AppState, ServiceType};
 use errors::*;
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -82,16 +82,29 @@ impl hyper::service::Service for MainService {
 
 pub(super) fn new_server(
     port: u16,
+    launchd: bool,
     state: Arc<RwLock<AppState>>,
 ) -> Box<Future<Item = (), Error = ()> + Send> {
-    let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
-    info!("Listening for web requests on {}", &addr);
+    if launchd {
+        // It's probably ok to panic if we didn't get socket.
+        let listener = get_activation_socket().unwrap();
+        info!("Listening for web requests on launchd socket");
+        Box::new(
+            Server::from_tcp(listener)
+                .unwrap()
+                .serve(move || future::ok::<_, Error>(MainService::new(Arc::clone(&state))))
+                .map_err(|e| error!("{:?}", e)),
+        )
+    } else {
+        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
+        info!("Listening for web requests on {}", &addr);
 
-    Box::new(
-        Server::bind(&addr)
-            .serve(move || future::ok::<_, Error>(MainService::new(Arc::clone(&state))))
-            .map_err(|e| error!("{:?}", e)),
-    )
+        Box::new(
+            Server::bind(&addr)
+                .serve(move || future::ok::<_, Error>(MainService::new(Arc::clone(&state))))
+                .map_err(|e| error!("{:?}", e)),
+        )
+    }
 }
 
 fn extract_host<'a>(req: &'a Request<Body>) -> Result<&'a str, Error> {
@@ -249,4 +262,56 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+use libc::size_t;
+#[cfg(target_os = "macos")]
+use std::os::raw::{c_char, c_int, c_void};
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn launch_activate_socket(name: *const c_char, fds: *mut *mut c_int, cnt: *mut size_t)
+        -> c_int;
+}
+
+#[cfg(target_os = "macos")]
+fn get_activation_socket() -> Result<TcpListener, Error> {
+    use libc::free;
+    use std::ffi::CString;
+    use std::os::unix::io::FromRawFd;
+    use std::ptr::null_mut;
+    unsafe {
+        let mut fds: *mut c_int = null_mut();
+        let mut cnt: size_t = 0;
+
+        let name = CString::new("DuwopSocket").expect("CString::new failed");
+        match launch_activate_socket(name.as_ptr(), &mut fds, &mut cnt) {
+            0 => {
+                debug!("name is {:?}, cnt is {}, fds is {:#?}", name, cnt, fds);
+                if cnt == 1 {
+                    let socket = TcpListener::from_raw_fd(*fds.offset(0));
+                    free(fds as *mut c_void);
+                    Ok(socket)
+                } else {
+                    Err(format_err!(
+                        "Could not get fd: cnt should be 1 but is {}",
+                        cnt
+                    ))
+                }
+            }
+            n => Err(format_err!(
+                "Could not get fd: launch_activate_socket != 0 (received: {})",
+                n
+            )),
+        }
+    }
+}
+
+// While it's not currently intended to be supported on other platforms, one
+// might want to use specific functionality on different platform so we might as
+// well make it compile.
+#[cfg(not(target_os = "macos"))]
+fn get_activation_socket() -> Result<TcpListener, Error> {
+    Err(format_err!("Only supported on macos"))
 }
