@@ -1,8 +1,10 @@
 mod errors;
+mod management;
 mod static_files;
 
 use super::state::{AppState, ServiceType};
 use errors::*;
+use management::*;
 
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
@@ -19,12 +21,13 @@ use log::{debug, error, info, trace};
 
 type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
 type StaticFuture = Box<Future<Item = Response<Body>, Error = Error> + Send>;
-type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
+type ApiFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 
 enum MainFuture {
     Static(StaticFuture),
     ReverseProxy(BoxFut),
-    ErrorResponse(ErrorFut),
+    ErrorResponse(ApiFut),
+    ManagementResponse(ApiFut),
 }
 
 impl Future for MainFuture {
@@ -35,7 +38,8 @@ impl Future for MainFuture {
         match *self {
             MainFuture::Static(ref mut future) => future.poll().map_err(Error::from),
             MainFuture::ReverseProxy(ref mut future) => future.poll().map_err(Error::from),
-            MainFuture::ErrorResponse(ref mut future) => future.poll().map_err(Error::from),
+            MainFuture::ErrorResponse(ref mut future) => future.poll(),
+            MainFuture::ManagementResponse(ref mut future) => future.poll(),
         }
     }
 }
@@ -65,6 +69,9 @@ impl hyper::service::Service for MainService {
             Ok(host) => host,
             Err(e) => return MainFuture::ErrorResponse(Box::new(internal_server_error(e))),
         };
+        if key == "duwop" {
+            return MainFuture::ManagementResponse(handle_management(req, Arc::clone(&self.state)));
+        }
         debug!("received request for key: {}, uri: {}", key, &req.uri());
         match state.services.get(key) {
             None => return MainFuture::ErrorResponse(Box::new(handle_404())),
@@ -122,6 +129,58 @@ fn extract_host<'a>(req: &'a Request<Body>) -> Result<&'a str, Error> {
     }
 }
 
+#[cfg(target_os = "macos")]
+use libc::size_t;
+#[cfg(target_os = "macos")]
+use std::os::raw::{c_char, c_int, c_void};
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn launch_activate_socket(name: *const c_char, fds: *mut *mut c_int, cnt: *mut size_t)
+        -> c_int;
+}
+
+#[cfg(target_os = "macos")]
+fn get_activation_socket() -> Result<TcpListener, Error> {
+    use libc::free;
+    use std::ffi::CString;
+    use std::os::unix::io::FromRawFd;
+    use std::ptr::null_mut;
+    unsafe {
+        let mut fds: *mut c_int = null_mut();
+        let mut cnt: size_t = 0;
+
+        let name = CString::new("DuwopSocket").expect("CString::new failed");
+        match launch_activate_socket(name.as_ptr(), &mut fds, &mut cnt) {
+            0 => {
+                debug!("name is {:?}, cnt is {}, fds is {:#?}", name, cnt, fds);
+                if cnt == 1 {
+                    let socket = TcpListener::from_raw_fd(*fds.offset(0));
+                    free(fds as *mut c_void);
+                    Ok(socket)
+                } else {
+                    Err(format_err!(
+                        "Could not get fd: cnt should be 1 but is {}",
+                        cnt
+                    ))
+                }
+            }
+            n => Err(format_err!(
+                "Could not get fd: launch_activate_socket != 0 (received: {})",
+                n
+            )),
+        }
+    }
+}
+
+// While it's not currently intended to be supported on other platforms, one
+// might want to use specific functionality on different platform so we might as
+// well make it compile.
+#[cfg(not(target_os = "macos"))]
+fn get_activation_socket() -> Result<TcpListener, Error> {
+    Err(format_err!("Only supported on macos"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,7 +223,7 @@ mod tests {
         for (k, v) in kv {
             map.insert(k, v);
         }
-        let state = AppState { services: map };
+        let state = AppState::construct(map, PathBuf::new());
         Arc::new(RwLock::new(state))
     }
 
@@ -262,56 +321,4 @@ mod tests {
             }
         }
     }
-}
-
-#[cfg(target_os = "macos")]
-use libc::size_t;
-#[cfg(target_os = "macos")]
-use std::os::raw::{c_char, c_int, c_void};
-
-#[cfg(target_os = "macos")]
-extern "C" {
-    fn launch_activate_socket(name: *const c_char, fds: *mut *mut c_int, cnt: *mut size_t)
-        -> c_int;
-}
-
-#[cfg(target_os = "macos")]
-fn get_activation_socket() -> Result<TcpListener, Error> {
-    use libc::free;
-    use std::ffi::CString;
-    use std::os::unix::io::FromRawFd;
-    use std::ptr::null_mut;
-    unsafe {
-        let mut fds: *mut c_int = null_mut();
-        let mut cnt: size_t = 0;
-
-        let name = CString::new("DuwopSocket").expect("CString::new failed");
-        match launch_activate_socket(name.as_ptr(), &mut fds, &mut cnt) {
-            0 => {
-                debug!("name is {:?}, cnt is {}, fds is {:#?}", name, cnt, fds);
-                if cnt == 1 {
-                    let socket = TcpListener::from_raw_fd(*fds.offset(0));
-                    free(fds as *mut c_void);
-                    Ok(socket)
-                } else {
-                    Err(format_err!(
-                        "Could not get fd: cnt should be 1 but is {}",
-                        cnt
-                    ))
-                }
-            }
-            n => Err(format_err!(
-                "Could not get fd: launch_activate_socket != 0 (received: {})",
-                n
-            )),
-        }
-    }
-}
-
-// While it's not currently intended to be supported on other platforms, one
-// might want to use specific functionality on different platform so we might as
-// well make it compile.
-#[cfg(not(target_os = "macos"))]
-fn get_activation_socket() -> Result<TcpListener, Error> {
-    Err(format_err!("Only supported on macos"))
 }
