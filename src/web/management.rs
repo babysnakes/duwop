@@ -5,14 +5,14 @@ use std::sync::{Arc, RwLock};
 use failure::{format_err, Error};
 use futures::future::Future;
 use http::StatusCode;
-use hyper::{Body, Request, Response, header};
+use hyper::{header, Body, Request, Response};
 use log::info;
 use serde_json;
 
 type ApiResponse = dyn Future<Item = Response<Body>, Error = Error> + Send;
 
 const API_V1_BASE: &str = "/api/v1";
-const API_STATE_PATH: &str = "/api/v1/state";
+const API_V1_STATE: &str = "/api/v1/state";
 
 pub fn handle_management(req: Request<Body>, state: Arc<RwLock<AppState>>) -> Box<ApiResponse> {
     info!("Received {} request: {}", &req.method(), &req.uri().path());
@@ -32,7 +32,7 @@ pub fn handle_api_v1_request(
     state: Arc<RwLock<AppState>>,
 ) -> Result<Box<ApiResponse>, Error> {
     match (req.method(), req.uri().path()) {
-        (&hyper::Method::GET, API_STATE_PATH) => return_state(Arc::clone(&state)),
+        (&hyper::Method::GET, API_V1_STATE) => return_state(Arc::clone(&state)),
         _ => Err(format_err!("api not yet implemented")),
     }
 }
@@ -57,4 +57,38 @@ fn return_state(state: Arc<RwLock<AppState>>) -> Result<Box<ApiResponse>, Error>
         )
         .map_err(Error::from),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::state::ServiceType;
+    use crate::web::tests::*;
+
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use futures::future::Future;
+    use hyper::{rt::Stream, Body, Method, Request, StatusCode};
+
+    #[test]
+    fn handle_management_returns_state_if_requested() {
+        let state = construct_state(vec![(
+            "project-dir".to_string(),
+            ServiceType::StaticFiles("/some/path".to_string()),
+        )]);
+        let services = &state.read().unwrap().services;
+        let request = Request::builder()
+            .header("host", "duwop.test")
+            .method(Method::GET)
+            .uri("/api/v1/state")
+            .body(Body::empty())
+            .unwrap();
+        let response = test_web_service(request, Arc::clone(&state)).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = response.into_body().concat2().map(|chunk| {
+            let body = chunk.iter().map(|b| b.to_owned()).collect::<Vec<u8>>();
+            let data: HashMap<String, ServiceType> = serde_json::from_slice(&body[..]).unwrap();
+            assert_eq!(data, *services);
+        });
+    }
 }

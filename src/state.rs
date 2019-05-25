@@ -10,7 +10,7 @@ use serde::{self, Deserialize, Serialize};
 use serde_json;
 use url::Url;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub enum ServiceType {
     StaticFiles(String),
     #[serde(with = "url_serde")]
