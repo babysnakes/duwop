@@ -80,7 +80,7 @@ impl hyper::service::Service for MainService {
     }
 }
 
-pub(super) fn new_server(
+pub fn new_server(
     port: u16,
     launchd: bool,
     state: Arc<RwLock<AppState>>,

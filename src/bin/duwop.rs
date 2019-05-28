@@ -1,9 +1,6 @@
-mod dns;
-mod state;
-mod web;
-
-use dns::DNSServer;
-use state::AppState;
+use duwop::dns::DNSServer;
+use duwop::state::AppState;
+use duwop::web;
 
 use dotenv;
 use env_logger;
