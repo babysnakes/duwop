@@ -8,9 +8,9 @@ pub fn handle_404() -> impl Future<Item = Response<Body>, Error = Error> {
     futures::future::result(
         Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(Body::empty())
-            .map_err(Error::from),
+            .body(Body::empty()),
     )
+    .map_err(Error::from)
 }
 
 pub fn internal_server_error(err: Error) -> impl Future<Item = Response<Body>, Error = Error> {

@@ -10,7 +10,7 @@ use serde::{self, Deserialize, Serialize};
 use serde_json;
 use url::Url;
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub enum ServiceType {
     StaticFiles(String),
     #[serde(with = "url_serde")]
@@ -23,6 +23,12 @@ pub struct AppState {
 }
 
 impl AppState {
+    // Currently this function is a helper for tests
+    #[cfg(test)]
+    pub fn construct(services: HashMap<String, ServiceType>) -> Self {
+        AppState { services }
+    }
+
     pub fn load(path: &str) -> Result<Arc<RwLock<AppState>>, Error> {
         let mut state_file_path = match dirs::home_dir() {
             Some(path) => path,
@@ -32,7 +38,7 @@ impl AppState {
         let mut state = AppState {
             services: HashMap::new(),
         };
-        &state.load_from_saved(state_file_path)?;
+        state.load_from_saved(state_file_path)?;
         Ok(Arc::new(RwLock::new(state)))
     }
 
