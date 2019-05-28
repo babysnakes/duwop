@@ -13,6 +13,7 @@ type ApiResponse = dyn Future<Item = Response<Body>, Error = Error> + Send;
 
 const API_V1_BASE: &str = "/api/v1";
 const API_V1_STATE: &str = "/api/v1/state";
+const API_V1_SERVICES: &str = "/api/v1/state/services";
 
 pub fn handle_management(req: Request<Body>, state: Arc<RwLock<AppState>>) -> Box<ApiResponse> {
     info!("Received {} request: {}", &req.method(), &req.uri().path());
@@ -33,7 +34,8 @@ pub fn handle_api_v1_request(
 ) -> Result<Box<ApiResponse>, Error> {
     match (req.method(), req.uri().path()) {
         (&hyper::Method::GET, API_V1_STATE) => return_state(Arc::clone(&state)),
-        _ => Err(format_err!("api not yet implemented")),
+        (&hyper::Method::POST, API_V1_SERVICES) => add_services(req, Arc::clone(&state)),
+        _ => Ok(Box::new(handle_404())),
     }
 }
 
@@ -41,7 +43,7 @@ pub fn handle_management_request(
     _req: Request<Body>,
     _state: Arc<RwLock<AppState>>,
 ) -> Result<Box<ApiResponse>, Error> {
-    Err(format_err!("management not yet implemented"))
+    Ok(Box::new(handle_404()))
 }
 
 fn return_state(state: Arc<RwLock<AppState>>) -> Result<Box<ApiResponse>, Error> {
@@ -59,8 +61,16 @@ fn return_state(state: Arc<RwLock<AppState>>) -> Result<Box<ApiResponse>, Error>
     ))
 }
 
+fn add_services(
+    req: Request<Body>,
+    state: Arc<RwLock<AppState>>,
+) -> Result<Box<ApiResponse>, Error> {
+    unimplemented!()
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::state::ServiceType;
     use crate::web::tests::*;
 
@@ -80,7 +90,7 @@ mod tests {
         let request = Request::builder()
             .header("host", "duwop.test")
             .method(Method::GET)
-            .uri("/api/v1/state")
+            .uri(API_V1_STATE)
             .body(Body::empty())
             .unwrap();
         let response = test_web_service(request, Arc::clone(&state)).unwrap();
@@ -91,4 +101,13 @@ mod tests {
             assert_eq!(data, *services);
         });
     }
+
+    // create services tests
+    // - no body should return invalid request
+    // - no valid object should return invalid request
+    // - existing key (even one among many new ones) should return invalid request
+    // - valid request should add object (both one and more)
+    // To find out:
+    // - what happens with one valid object and one not valid (serde_json wise)?
+    // - how do we mock the save state
 }

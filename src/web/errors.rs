@@ -13,6 +13,15 @@ pub fn handle_404() -> impl Future<Item = Response<Body>, Error = Error> {
     .map_err(Error::from)
 }
 
+pub fn bad_request() -> impl Future<Item = Response<Body>, Error = Error> {
+    futures::future::result(
+        Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::empty()),
+    )
+    .map_err(Error::from)
+}
+
 pub fn internal_server_error(err: Error) -> impl Future<Item = Response<Body>, Error = Error> {
     warn!("Internal Server Error: {}", err);
     futures::future::result(
