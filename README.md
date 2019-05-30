@@ -71,10 +71,14 @@ Enjoy
 
 ### Development environment setup
 
-* Copy `extra/.env-sample` to `.env` in the current directory and edit to your
+* Create `devstate` directory at the repository root and add to it a few links
+  to directories with html files and a few files that contains a url to proxy on
+  the first line - other lines are ignored - e.g. a `local3000.proxy` file with
+  `http://localhost:3000/` as the first line. The key (that is hostname) is the
+  name of the directory or the name of the file without the `.proxy` extension.
+  Other files will be ignored but you can add them as you wish.
+* Copy `extra/env-sample` to `.env` in the current directory and edit to your
   liking.
-* Copy `extra/devstate-sample.json` to `devstate.json` (or any other name and
-  update the `.env` file) and edit keys with paths for static serving.
 
 ### Contributors
 

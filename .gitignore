@@ -3,3 +3,4 @@
 /devstate.json
 *.bak
 /.env
+/devdata/

@@ -75,6 +75,10 @@ impl hyper::service::Service for MainService {
                 ServiceType::ReverseProxy(url) => MainFuture::ReverseProxy(
                     hyper_reverse_proxy::call([127, 0, 0, 1].into(), &url.as_str(), req),
                 ),
+                ServiceType::InvalidConfig(message) => {
+                    MainFuture::ErrorResponse(Box::new(displayed_error(message.to_string())))
+                }
+                ServiceType::InvalidFile => MainFuture::ErrorResponse(Box::new(handle_404())),
             },
         }
     }
@@ -198,7 +202,7 @@ pub mod tests {
         for (k, v) in kv {
             map.insert(k, v);
         }
-        let state = AppState::construct(map);
+        let state = AppState::from_services(map);
         Arc::new(RwLock::new(state))
     }
 
@@ -233,13 +237,7 @@ pub mod tests {
     fn respond_correctly_to_static_file_request() {
         let state = construct_state(vec![(
             "project-dir".to_string(),
-            ServiceType::StaticFiles(
-                std::env::current_dir()
-                    .unwrap()
-                    .into_os_string()
-                    .into_string()
-                    .unwrap(),
-            ),
+            ServiceType::StaticFiles(std::env::current_dir().unwrap().into_os_string()),
         )]);
         let request = Request::builder()
             .header("host", "project-dir.test")
@@ -254,7 +252,7 @@ pub mod tests {
     fn request_without_host_should_return_500_error() {
         let state = construct_state(vec![(
             "key".to_string(),
-            ServiceType::StaticFiles("/some/path".to_string()),
+            ServiceType::StaticFiles("/some/path".into()),
         )]);
         let request = Request::builder().body(Body::empty()).unwrap();
         let response = test_web_service(request, state).unwrap();
@@ -265,7 +263,7 @@ pub mod tests {
     fn request_with_invalid_domain_should_return_500() {
         let state = construct_state(vec![(
             "key".to_string(),
-            ServiceType::StaticFiles("/some/path".to_string()),
+            ServiceType::StaticFiles("/some/path".into()),
         )]);
         let request = Request::builder()
             .header("host", "example.com")
@@ -279,7 +277,7 @@ pub mod tests {
     fn request_with_undefined_host_should_return_404() {
         let state = construct_state(vec![(
             "key".to_string(),
-            ServiceType::StaticFiles("/some/path".to_string()),
+            ServiceType::StaticFiles("/some/path".into()),
         )]);
         let request = Request::builder()
             .header("host", "undefined.test")
@@ -287,5 +285,21 @@ pub mod tests {
             .unwrap();
         let response = test_web_service(request, state).unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn request_for_invalid_config_should_return_messaged_error() {
+        let state = construct_state(vec![(
+            "key".to_string(),
+            ServiceType::InvalidConfig("invalid config".to_string()),
+        )]);
+        let request = Request::builder()
+            .header("host", "key.test")
+            .body(Body::empty())
+            .unwrap();
+        let response = test_web_service(request, state).unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // TODO: validating the body is more involved and currently not worth
+        // it.
     }
 }

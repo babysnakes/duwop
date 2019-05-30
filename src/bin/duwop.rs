@@ -2,6 +2,8 @@ use duwop::dns::DNSServer;
 use duwop::state::AppState;
 use duwop::web;
 
+use std::sync::{Arc, RwLock};
+
 use dotenv;
 use env_logger;
 use failure::Error;
@@ -12,7 +14,7 @@ use log::{debug, error, info};
 struct Opt {
     dns_port: u16,
     web_port: u16,
-    state_path: String,
+    state_dir: Option<String>,
     launchd: bool,
 }
 
@@ -38,10 +40,9 @@ fn parse_options() -> Opt {
 
     let default_dns_port = "9053";
     let default_web_port = "80";
-    let static_file_relative = ".duwop/state.json";
     let dns_port_opt = "dns-port";
     let web_port_opt = "web-port";
-    let state_file_opt = "state-file";
+    let state_dir_opt = "state-dir";
     let launchd_opt = "launchd";
 
     let matches = App::new("duwop")
@@ -62,12 +63,12 @@ fn parse_options() -> Opt {
                 .takes_value(true)
                 .default_value(default_web_port)
                 .env("HTTP_PORT"),
-            Arg::with_name(state_file_opt)
-                .long(state_file_opt)
-                .help("Alternative of state file (absolute or relative to home directory)")
-                .value_name("FILE")
+            // Development only. Not for regular use.
+            Arg::with_name(state_dir_opt)
+                .long(state_dir_opt)
+                .hidden(true)
                 .takes_value(true)
-                .env("APP_STATE_DB"),
+                .env("APP_STATE_DIR"),
             Arg::with_name(launchd_opt)
                 .long(launchd_opt)
                 .help("Enable launchd socket (for running on mac in port 80)"),
@@ -77,10 +78,7 @@ fn parse_options() -> Opt {
     Opt {
         dns_port: value_t!(matches.value_of(dns_port_opt), u16).unwrap_or_else(|e| e.exit()),
         web_port: value_t!(matches.value_of(web_port_opt), u16).unwrap_or_else(|e| e.exit()),
-        state_path: matches
-            .value_of(state_file_opt)
-            .unwrap_or(static_file_relative)
-            .to_string(),
+        state_dir: matches.value_of(state_dir_opt).map(String::from),
         launchd: matches.is_present(launchd_opt),
     }
 }
@@ -88,9 +86,11 @@ fn parse_options() -> Opt {
 fn run(opt: Opt) -> Result<(), Error> {
     info!("Starting...");
     debug!("running with options: {:#?}", opt);
-    let app_state = AppState::load(&opt.state_path)?;
+    let mut app_state = AppState::new(opt.state_dir)?;
+    app_state.load_services()?;
+    let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(opt.dns_port)?;
-    let web_server = web::new_server(opt.web_port, opt.launchd, app_state);
+    let web_server = web::new_server(opt.web_port, opt.launchd, locked);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
