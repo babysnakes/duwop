@@ -2,6 +2,7 @@ use duwop::dns::DNSServer;
 use duwop::state::AppState;
 use duwop::web;
 
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use dotenv;
@@ -14,7 +15,7 @@ use log::{debug, error, info};
 struct Opt {
     dns_port: u16,
     web_port: u16,
-    state_dir: Option<String>,
+    state_dir: PathBuf,
     launchd: bool,
 }
 
@@ -38,6 +39,8 @@ fn main() {
 fn parse_options() -> Opt {
     use clap::{value_t, App, Arg};
 
+    let mut default_state_dir = dirs::home_dir().expect("Couldn't extract home directory");
+    default_state_dir.push(".duwop/state");
     let default_dns_port = "9053";
     let default_web_port = "80";
     let dns_port_opt = "dns-port";
@@ -75,10 +78,15 @@ fn parse_options() -> Opt {
         ])
         .get_matches();
 
+    let state_dir = match matches.value_of(state_dir_opt) {
+        Some(path) => PathBuf::from(path),
+        None => default_state_dir,
+    };
+
     Opt {
         dns_port: value_t!(matches.value_of(dns_port_opt), u16).unwrap_or_else(|e| e.exit()),
         web_port: value_t!(matches.value_of(web_port_opt), u16).unwrap_or_else(|e| e.exit()),
-        state_dir: matches.value_of(state_dir_opt).map(String::from),
+        state_dir,
         launchd: matches.is_present(launchd_opt),
     }
 }
@@ -86,7 +94,7 @@ fn parse_options() -> Opt {
 fn run(opt: Opt) -> Result<(), Error> {
     info!("Starting...");
     debug!("running with options: {:#?}", opt);
-    let mut app_state = AppState::new(opt.state_dir)?;
+    let mut app_state = AppState::new(&opt.state_dir);
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(opt.dns_port)?;

@@ -4,7 +4,7 @@ use std::fs::{read_dir, DirEntry, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use failure::{format_err, Error, ResultExt};
+use failure::{Error, ResultExt};
 use log::{debug, info, trace, warn};
 use url::Url;
 
@@ -25,19 +25,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Returns a Result<AppState, Error, without any services defined. Use
-    /// `load` to populate services from state directory.
-    pub fn new(path: Option<String>) -> Result<Self, Error> {
-        let state_dir = match path {
-            Some(path) => PathBuf::from(path),
-            None => {
-                dirs::home_dir().ok_or_else(|| format_err!("Couldn't extract home directory"))?
-            }
-        };
-        Ok(AppState {
-            path: state_dir,
+    /// Returns AppState with empty services. use `load_services` to populate
+    /// the services from disk.
+    pub fn new(path: &PathBuf) -> Self {
+        AppState {
+            path: path.to_path_buf(),
             services: HashMap::new(),
-        })
+        }
     }
 
     // Currently this function is a helper for tests
@@ -52,7 +46,7 @@ impl AppState {
     pub fn load_services(&mut self) -> Result<(), Error> {
         info!("loading state from file system");
         debug!("loading services from {:?}", &self.path);
-        let services = read_dir(&self.path)?
+        let services = read_dir(&self.path).context(format!("error reading directory ({:?})", &self.path.to_path_buf().into_os_string()))?
             .filter_map(|item| {
                 let entry = item.unwrap();
                 let name = entry.file_name();
