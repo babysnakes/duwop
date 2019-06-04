@@ -1,4 +1,5 @@
 use duwop::dns::DNSServer;
+use duwop::management::Server as ManagementServer;
 use duwop::state::AppState;
 use duwop::web;
 
@@ -15,6 +16,7 @@ use log::{debug, error, info};
 struct Opt {
     dns_port: u16,
     web_port: u16,
+    management_port: u16,
     state_dir: PathBuf,
     launchd: bool,
 }
@@ -37,14 +39,16 @@ fn main() {
 }
 
 fn parse_options() -> Opt {
-    use clap::{value_t, App, Arg};
+    use clap::{value_t_or_exit, App, Arg};
 
     let mut default_state_dir = dirs::home_dir().expect("Couldn't extract home directory");
     default_state_dir.push(".duwop/state");
     let default_dns_port = "9053";
     let default_web_port = "80";
+    let default_management_port = "9054";
     let dns_port_opt = "dns-port";
     let web_port_opt = "web-port";
+    let management_port_opt = "management-port";
     let state_dir_opt = "state-dir";
     let launchd_opt = "launchd";
 
@@ -66,6 +70,13 @@ fn parse_options() -> Opt {
                 .takes_value(true)
                 .default_value(default_web_port)
                 .env("HTTP_PORT"),
+            Arg::with_name(management_port_opt)
+                .long(management_port_opt)
+                .help("The port to listen for management")
+                .value_name("PORT")
+                .takes_value(true)
+                .default_value(default_management_port)
+                .env("MANAGEMENT_PORT"),
             // Development only. Not for regular use.
             Arg::with_name(state_dir_opt)
                 .long(state_dir_opt)
@@ -74,6 +85,7 @@ fn parse_options() -> Opt {
                 .env("APP_STATE_DIR"),
             Arg::with_name(launchd_opt)
                 .long(launchd_opt)
+                .conflicts_with(web_port_opt)
                 .help("Enable launchd socket (for running on mac in port 80)"),
         ])
         .get_matches();
@@ -84,8 +96,9 @@ fn parse_options() -> Opt {
     };
 
     Opt {
-        dns_port: value_t!(matches.value_of(dns_port_opt), u16).unwrap_or_else(|e| e.exit()),
-        web_port: value_t!(matches.value_of(web_port_opt), u16).unwrap_or_else(|e| e.exit()),
+        dns_port: value_t_or_exit!(matches.value_of(dns_port_opt), u16),
+        web_port: value_t_or_exit!(matches.value_of(web_port_opt), u16),
+        management_port: value_t_or_exit!(matches.value_of(management_port_opt), u16),
         state_dir,
         launchd: matches.is_present(launchd_opt),
     }
@@ -98,12 +111,14 @@ fn run(opt: Opt) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(opt.dns_port)?;
-    let web_server = web::new_server(opt.web_port, opt.launchd, locked);
+    let web_server = web::new_server(opt.web_port, opt.launchd, Arc::clone(&locked));
+    let management_server = ManagementServer::as_future(opt.management_port, Arc::clone(&locked));
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
         }));
         tokio::spawn(web_server);
+        tokio::spawn(management_server);
         Ok(())
     }));
     Ok(())

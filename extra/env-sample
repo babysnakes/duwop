@@ -1,6 +1,7 @@
 # developer ports
 DNS_PORT=9253
 HTTP_PORT=9080
+MANAGEMENT_PORT=9254
 
 # developer data directory
 APP_STATE_DIR=/path/to/repository/root/devdata/

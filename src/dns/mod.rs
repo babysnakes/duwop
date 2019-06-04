@@ -7,7 +7,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 use futures::future::Future;
 use futures::try_ready;
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 use tokio::net::UdpSocket;
 use tokio::prelude::*;
 
@@ -18,6 +18,7 @@ pub struct DNSServer {
 impl DNSServer {
     pub fn new(port: u16) -> Result<DNSServer> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        info!("listening for dns requests on {}", &addr);
         let socket = UdpSocket::bind(&addr)?;
         Ok(DNSServer { socket })
     }
