@@ -1,10 +1,10 @@
 # developer ports
-DNS_PORT=9253
-HTTP_PORT=9080
-MANAGEMENT_PORT=9254
+DUWOP_DNS_PORT=9253
+DUWOP_HTTP_PORT=9280
+DUWOP_MANAGEMENT_PORT=9254
 
 # developer data directory
-APP_STATE_DIR=/path/to/repository/root/devdata/
+DUWOP_APP_STATE_DIR=/path/to/repository/root/devdata/
 
 # env_logger
 RUST_LOG="duwop=trace,tokio=warn"

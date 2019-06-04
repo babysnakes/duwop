@@ -106,14 +106,13 @@ impl Request {
 
 impl Response {
     #[allow(dead_code)] // TODO: remove when implementing client.
-    // parses the Response returned to the client.
+                        // parses the Response returned to the client.
     fn parse_serialized(input: &str) -> Result<String, String> {
         let mut parts = input.splitn(2, " ");
         match parts.next() {
             Some("OK") => Ok(input.to_owned()),
             _ => Err(input.to_owned()),
         }
-
     }
 
     fn serialize(&self) -> String {

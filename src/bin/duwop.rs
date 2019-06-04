@@ -1,3 +1,5 @@
+use duwop::app_defaults::{DNS_PORT, HTTP_PORT, MANAGEMENT_PORT, STATE_DIR};
+use duwop::cli_helpers::*;
 use duwop::dns::DNSServer;
 use duwop::management::Server as ManagementServer;
 use duwop::state::AppState;
@@ -6,6 +8,7 @@ use duwop::web;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use clap::{App, Arg};
 use dotenv;
 use env_logger;
 use failure::Error;
@@ -39,16 +42,11 @@ fn main() {
 }
 
 fn parse_options() -> Opt {
-    use clap::{value_t_or_exit, App, Arg};
-
     let mut default_state_dir = dirs::home_dir().expect("Couldn't extract home directory");
-    default_state_dir.push(".duwop/state");
-    let default_dns_port = "9053";
-    let default_web_port = "80";
-    let default_management_port = "9054";
+    default_state_dir.push(STATE_DIR);
     let dns_port_opt = "dns-port";
-    let web_port_opt = "web-port";
-    let management_port_opt = "management-port";
+    let http_port_opt = "http-port";
+    let management_port_opt = "mgmt-port";
     let state_dir_opt = "state-dir";
     let launchd_opt = "launchd";
 
@@ -58,48 +56,44 @@ fn parse_options() -> Opt {
         .args(&[
             Arg::with_name(dns_port_opt)
                 .long(dns_port_opt)
-                .help("The dns port to listen on (UDP)")
+                .help("Alternative DNS port")
                 .value_name("PORT")
                 .takes_value(true)
-                .default_value(default_dns_port)
-                .env("DNS_PORT"),
-            Arg::with_name(web_port_opt)
-                .long(web_port_opt)
-                .help("The port to listen for web requests")
+                .env("DUWOP_DNS_PORT"),
+            Arg::with_name(http_port_opt)
+                .long(http_port_opt)
+                .help("Alternative HTTP port")
                 .value_name("PORT")
                 .takes_value(true)
-                .default_value(default_web_port)
-                .env("HTTP_PORT"),
+                .env("DUWOP_HTTP_PORT"),
             Arg::with_name(management_port_opt)
                 .long(management_port_opt)
-                .help("The port to listen for management")
+                .help("Alternative management port")
                 .value_name("PORT")
                 .takes_value(true)
-                .default_value(default_management_port)
-                .env("MANAGEMENT_PORT"),
+                .env("DUWOP_MANAGEMENT_PORT"),
             // Development only. Not for regular use.
             Arg::with_name(state_dir_opt)
                 .long(state_dir_opt)
                 .hidden(true)
                 .takes_value(true)
-                .env("APP_STATE_DIR"),
+                .env("DUWOP_APP_STATE_DIR"),
             Arg::with_name(launchd_opt)
                 .long(launchd_opt)
-                .conflicts_with(web_port_opt)
+                .conflicts_with(http_port_opt)
                 .help("Enable launchd socket (for running on mac in port 80)"),
         ])
         .get_matches();
 
-    let state_dir = match matches.value_of(state_dir_opt) {
-        Some(path) => PathBuf::from(path),
-        None => default_state_dir,
-    };
-
     Opt {
-        dns_port: value_t_or_exit!(matches.value_of(dns_port_opt), u16),
-        web_port: value_t_or_exit!(matches.value_of(web_port_opt), u16),
-        management_port: value_t_or_exit!(matches.value_of(management_port_opt), u16),
-        state_dir,
+        dns_port: parse_val_with_default::<u16>(dns_port_opt, &matches, DNS_PORT),
+        web_port: parse_val_with_default::<u16>(http_port_opt, &matches, HTTP_PORT),
+        management_port: parse_val_with_default::<u16>(
+            management_port_opt,
+            &matches,
+            MANAGEMENT_PORT,
+        ),
+        state_dir: parse_val_with_default::<PathBuf>(state_dir_opt, &matches, default_state_dir),
         launchd: matches.is_present(launchd_opt),
     }
 }
