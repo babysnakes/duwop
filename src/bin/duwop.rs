@@ -18,7 +18,7 @@ use log::{debug, error, info};
 #[derive(Debug)]
 struct Opt {
     dns_port: u16,
-    web_port: u16,
+    http_port: u16,
     management_port: u16,
     state_dir: PathBuf,
     launchd: bool,
@@ -87,7 +87,7 @@ fn parse_options() -> Opt {
 
     Opt {
         dns_port: parse_val_with_default::<u16>(dns_port_opt, &matches, DNS_PORT),
-        web_port: parse_val_with_default::<u16>(http_port_opt, &matches, HTTP_PORT),
+        http_port: parse_val_with_default::<u16>(http_port_opt, &matches, HTTP_PORT),
         management_port: parse_val_with_default::<u16>(
             management_port_opt,
             &matches,
@@ -105,8 +105,8 @@ fn run(opt: Opt) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(opt.dns_port)?;
-    let web_server = web::new_server(opt.web_port, opt.launchd, Arc::clone(&locked));
-    let management_server = ManagementServer::as_future(opt.management_port, Arc::clone(&locked));
+    let web_server = web::new_server(opt.http_port, opt.launchd, Arc::clone(&locked));
+    let management_server = ManagementServer::run(opt.management_port, Arc::clone(&locked));
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);

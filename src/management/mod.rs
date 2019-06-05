@@ -32,7 +32,7 @@ enum Response {
 
 impl Server {
     /// New management server with provided mutable state
-    pub fn as_future(
+    pub fn run(
         port: u16,
         state: Arc<RwLock<AppState>>,
     ) -> Box<impl Future<Item = (), Error = ()> + Send> {
@@ -83,23 +83,23 @@ impl Server {
 
 impl Request {
     fn parse(input: &str) -> Result<Request, String> {
-        let mut parts = input.splitn(3, " ");
+        let mut parts = input.splitn(3, ' ');
         match parts.next() {
             Some("Reload") => {
                 if parts.next().is_some() {
-                    return Err(format!("Reload doesn't take arguments"));
+                    return Err("Reload doesn't take arguments".to_string());
                 };
                 Ok(Request::ReloadState)
             }
             Some(cmd) => Err(format!("invalid command: {}", cmd)),
-            None => Err(format!("empty input")),
+            None => Err("empty input".to_string()),
         }
     }
 
     #[allow(dead_code)] // TODO: remove when implementing client.
     fn serialize(&self) -> String {
         match self {
-            Request::ReloadState => format!("Reload"),
+            Request::ReloadState => "Reload".to_string(),
         }
     }
 }
@@ -108,7 +108,7 @@ impl Response {
     #[allow(dead_code)] // TODO: remove when implementing client.
                         // parses the Response returned to the client.
     fn parse_serialized(input: &str) -> Result<String, String> {
-        let mut parts = input.splitn(2, " ");
+        let mut parts = input.splitn(2, ' ');
         match parts.next() {
             Some("OK") => Ok(input.to_owned()),
             _ => Err(input.to_owned()),
@@ -116,8 +116,8 @@ impl Response {
     }
 
     fn serialize(&self) -> String {
-        let ok = format!("OK");
-        let error = format!("ERROR");
+        let ok = "OK".to_string();
+        let error = "ERROR".to_string();
         match self {
             Response::Reloaded => format!("{} Reloaded", ok),
             Response::Error(m) => format!("{} {}", error, m),
