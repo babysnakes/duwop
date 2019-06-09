@@ -1,10 +1,12 @@
+pub mod client;
+
 use std::io::BufReader;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
 use super::state::AppState;
 
-use failure::Error;
+use failure::{format_err, Error};
 use log::info;
 use tokio;
 use tokio::io::{lines, write_all};
@@ -17,15 +19,15 @@ pub struct Server {
 }
 
 /// Protocol request
-enum Request {
+pub enum Request {
     /// Reload the state from disk.
     ReloadState,
 }
 
 /// Protocol response
-enum Response {
+pub enum Response {
     // A response without specific text
-    Reloaded,
+    Done,
     // Error message
     Error(String),
 }
@@ -55,7 +57,7 @@ impl Server {
                         };
                         match request {
                             Request::ReloadState => match server.reload_state() {
-                                Ok(()) => Response::Reloaded,
+                                Ok(()) => Response::Done,
                                 Err(e) => Response::Error(format!("error reloading: {}", e)),
                             },
                         }
@@ -96,7 +98,6 @@ impl Request {
         }
     }
 
-    #[allow(dead_code)] // TODO: remove when implementing client.
     fn serialize(&self) -> String {
         match self {
             Request::ReloadState => "Reload".to_string(),
@@ -105,21 +106,24 @@ impl Request {
 }
 
 impl Response {
-    #[allow(dead_code)] // TODO: remove when implementing client.
-                        // parses the Response returned to the client.
-    fn parse_serialized(input: &str) -> Result<String, String> {
+    fn parse(input: &str) -> Result<Response, Error> {
         let mut parts = input.splitn(2, ' ');
-        match parts.next() {
-            Some("OK") => Ok(input.to_owned()),
-            _ => Err(input.to_owned()),
+        match parts.next().map(|s| s.trim()) {
+            Some("OK") => Ok(Response::Done),
+            Some("ERROR") => {
+                let error = parts.next().unwrap_or("");
+                Ok(Response::Error(error.to_string()))
+            }
+            Some(_) => Err(format_err!("invalid response from server: {}", &input)),
+            None => Err(format_err!("no response from server")),
         }
     }
 
-    fn serialize(&self) -> String {
+    pub fn serialize(&self) -> String {
         let ok = "OK".to_string();
         let error = "ERROR".to_string();
         match self {
-            Response::Reloaded => format!("{} Reloaded", ok),
+            Response::Done => ok,
             Response::Error(m) => format!("{} {}", error, m),
         }
     }

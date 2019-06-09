@@ -1,4 +1,4 @@
-use duwop::app_defaults::{DNS_PORT, HTTP_PORT, MANAGEMENT_PORT, STATE_DIR};
+use duwop::app_defaults::{DNS_PORT, HTTP_PORT, MANAGEMENT_PORT, STATE_DIR, VERSION};
 use duwop::cli_helpers::*;
 use duwop::dns::DNSServer;
 use duwop::management::Server as ManagementServer;
@@ -51,7 +51,7 @@ fn parse_options() -> Opt {
     let launchd_opt = "launchd";
 
     let matches = App::new("duwop")
-        .version("0.1-alpha")
+        .version(VERSION)
         .about("Web serve local directories and proxy local ports on default http port and real DNS names.")
         .args(&[
             Arg::with_name(dns_port_opt)
