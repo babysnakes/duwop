@@ -4,9 +4,11 @@ use std::io::BufReader;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
+use super::app_defaults::*;
 use super::state::AppState;
 
 use failure::{format_err, Error};
+use flexi_logger::{LogSpecification, ReconfigurationHandle};
 use log::info;
 use tokio;
 use tokio::io::{lines, write_all};
@@ -16,12 +18,33 @@ use tokio::prelude::*;
 #[derive(Clone)]
 pub struct Server {
     state: Arc<RwLock<AppState>>,
+    log_handler: Arc<RwLock<ReconfigurationHandle>>,
 }
 
 /// Protocol request
+#[derive(Debug, PartialEq)]
 pub enum Request {
     /// Reload the state from disk.
     ReloadState,
+
+    /// Set log level
+    SetLogLevel(LogLevel),
+
+    /// Reset log level
+    ResetLogLevel,
+}
+
+/// Represents various log level commands.
+#[derive(Debug, PartialEq)]
+pub enum LogLevel {
+    /// Set debug log level
+    DebugLevel,
+
+    /// Set trace log level
+    TraceLevel,
+
+    /// Set custom Level (similar to setting RUST_LOG)
+    CustomLevel(String),
 }
 
 /// Protocol response
@@ -37,8 +60,9 @@ impl Server {
     pub fn run(
         port: u16,
         state: Arc<RwLock<AppState>>,
+        log_handler: Arc<RwLock<ReconfigurationHandle>>,
     ) -> Box<impl Future<Item = (), Error = ()> + Send> {
-        let server = Server { state };
+        let server = Server { state, log_handler };
         let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
         info!("listening for management requests on {}", &addr);
         let listener = TcpListener::bind(&addr).unwrap();
@@ -59,6 +83,20 @@ impl Server {
                             Request::ReloadState => match server.reload_state() {
                                 Ok(()) => Response::Done,
                                 Err(e) => Response::Error(format!("error reloading: {}", e)),
+                            },
+                            Request::SetLogLevel(log_level) => {
+                                match server.set_log_level(log_level) {
+                                    Ok(()) => Response::Done,
+                                    Err(e) => {
+                                        Response::Error(format!("error setting log level: {}", e))
+                                    }
+                                }
+                            }
+                            Request::ResetLogLevel => match server.reset_log_level() {
+                                Ok(()) => Response::Done,
+                                Err(e) => {
+                                    Response::Error(format!("error setting log level: {}", e))
+                                }
                             },
                         }
                     });
@@ -81,6 +119,26 @@ impl Server {
         unlocked.load_services()?;
         Ok(())
     }
+
+    fn set_log_level(&mut self, level: LogLevel) -> Result<(), Error> {
+        let locked = Arc::clone(&self.log_handler);
+        let mut handler = locked.write().unwrap();
+        let spec = match level {
+            LogLevel::DebugLevel => LogSpecification::parse("duwop=debug")?,
+            LogLevel::TraceLevel => LogSpecification::parse("duwop=trace")?,
+            LogLevel::CustomLevel(value) => LogSpecification::parse(&value)?,
+        };
+        handler.set_new_spec(spec);
+        Ok(())
+    }
+
+    fn reset_log_level(&mut self) -> Result<(), Error> {
+        let locked = Arc::clone(&self.log_handler);
+        let mut handler = locked.write().unwrap();
+        let spec = LogSpecification::env_or_parse(LOG_LEVEL)?;
+        handler.set_new_spec(spec);
+        Ok(())
+    }
 }
 
 impl Request {
@@ -93,6 +151,20 @@ impl Request {
                 };
                 Ok(Request::ReloadState)
             }
+            Some("Log") => match parts.next() {
+                Some("reset") => Ok(Request::ResetLogLevel),
+                Some("debug") => Ok(Request::SetLogLevel(LogLevel::DebugLevel)),
+                Some("trace") => Ok(Request::SetLogLevel(LogLevel::TraceLevel)),
+                Some("custom") => match parts.next() {
+                    // TODO: should we validate input? I managed to mess with the logger :(
+                    Some(value) => Ok(Request::SetLogLevel(LogLevel::CustomLevel(
+                        value.to_string(),
+                    ))),
+                    None => Err("custom log level requires value".to_string()),
+                },
+                Some(cmd) => Err(format!("invalid log command: {}", cmd)),
+                None => Err("Log requires command".to_string()),
+            },
             Some(cmd) => Err(format!("invalid command: {}", cmd)),
             None => Err("empty input".to_string()),
         }
@@ -101,6 +173,12 @@ impl Request {
     fn serialize(&self) -> String {
         match self {
             Request::ReloadState => "Reload".to_string(),
+            Request::SetLogLevel(level) => match level {
+                LogLevel::DebugLevel => "Log debug".to_string(),
+                LogLevel::TraceLevel => "Log trace".to_string(),
+                LogLevel::CustomLevel(value) => format!("Log custom {}", value),
+            },
+            Request::ResetLogLevel => "Log reset".to_string(),
         }
     }
 }
@@ -126,5 +204,75 @@ impl Response {
             Response::Done => ok,
             Response::Error(m) => format!("{} {}", error, m),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! request_parse_ok {
+        ($name:ident, $input:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let result = Request::parse($input).unwrap();
+                assert_eq!(result, $expected);
+            }
+        };
+    }
+
+    macro_rules! request_parse_err {
+        ($name:ident, $input:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let result = Request::parse($input);
+                assert!(result.is_err());
+                let msg = result.unwrap_err();
+                assert!(msg.contains($expected))
+            }
+        };
+    }
+
+    macro_rules! request_serialize {
+        ($name:ident, $request:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                assert_eq!($request.serialize(), $expected.to_string());
+            }
+        };
+    }
+
+    request_parse_ok! { parse_reload, "Reload", Request::ReloadState }
+    request_parse_ok! { parse_reset_log, "Log reset", Request::ResetLogLevel }
+    request_parse_ok! {
+        parse_debug_log_level, "Log debug", Request::SetLogLevel(LogLevel::DebugLevel)
+    }
+    request_parse_ok! {
+        parse_trace_log_level, "Log trace", Request::SetLogLevel(LogLevel::TraceLevel)
+    }
+    request_parse_ok! {
+        parse_custom_log_level, "Log custom debug, duwop=trace",
+        Request::SetLogLevel(LogLevel::CustomLevel("debug, duwop=trace".to_string()))
+    }
+
+    request_parse_err! { parse_reload_with_with_argument, "Reload more", "arguments" }
+    request_parse_err! { parse_invalid_log_level_command, "Log invalid", "invalid log command" }
+    request_parse_err! { parse_log_without_command, "Log", "Log requires command" }
+    request_parse_err! { parse_log_custom_without_value, "Log custom", "custom log level requires value"}
+    request_parse_err! { parse_invalid_input, "UNDEFINED", "invalid" }
+    request_parse_err! { parse_empty_request, "", "invalid" }
+
+    request_serialize! { serialize_reload_state, Request::ReloadState, "Reload" }
+    request_serialize! { serialize_reset_log, Request::ResetLogLevel, "Log reset" }
+    request_serialize! {
+        serialize_debug_log, Request::SetLogLevel(LogLevel::DebugLevel), "Log debug"
+    }
+    request_serialize! {
+        serialize_trace_log, Request::SetLogLevel(LogLevel::TraceLevel), "Log trace"
+    }
+    request_serialize! {
+        serialize_custom_log,
+        Request::SetLogLevel(LogLevel::CustomLevel("info, duwop:trace".to_string())),
+        "Log custom info, duwop:trace"
     }
 }

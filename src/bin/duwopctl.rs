@@ -5,8 +5,8 @@ use duwop::management::{Request, Response};
 
 use clap::{App, AppSettings, Arg, SubCommand};
 use dotenv;
-use env_logger;
 use failure::{format_err, Error};
+use flexi_logger;
 use log::{debug, error, info};
 
 #[derive(Debug)]
@@ -21,7 +21,7 @@ enum Command {
 
 fn main() {
     dotenv::dotenv().ok();
-    env_logger::init();
+    flexi_logger::Logger::with_env().start().unwrap();
     let opt = parse_options();
     match run(opt) {
         Ok(_) => {}

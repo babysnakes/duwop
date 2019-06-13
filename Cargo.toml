@@ -21,7 +21,7 @@ url = "1.7.2"
 failure = "0.1.5"
 failure_derive = "0.1.5"
 log = "0.4.6"
-env_logger = "0.6.1"
+flexi_logger = "0.13.2"
 dotenv = "0.14.0"
 clap = { version = "2.33.0", features = ["wrap_help"] }
 dirs = "1.0.5"

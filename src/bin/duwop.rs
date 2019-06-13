@@ -1,4 +1,4 @@
-use duwop::app_defaults::{DNS_PORT, HTTP_PORT, MANAGEMENT_PORT, STATE_DIR, VERSION};
+use duwop::app_defaults::*;
 use duwop::cli_helpers::*;
 use duwop::dns::DNSServer;
 use duwop::management::Server as ManagementServer;
@@ -10,8 +10,8 @@ use std::sync::{Arc, RwLock};
 
 use clap::{App, Arg};
 use dotenv;
-use env_logger;
 use failure::Error;
+use flexi_logger::{Cleanup, Criterion, Logger, Naming};
 use futures::future::{self, Future};
 use log::{debug, error, info};
 
@@ -21,12 +21,12 @@ struct Opt {
     http_port: u16,
     management_port: u16,
     state_dir: PathBuf,
+    log_to_file: bool,
     launchd: bool,
 }
 
 fn main() {
     dotenv::dotenv().ok();
-    env_logger::init();
     let opt = parse_options();
     match run(opt) {
         Ok(_) => {
@@ -48,6 +48,7 @@ fn parse_options() -> Opt {
     let http_port_opt = "http-port";
     let management_port_opt = "mgmt-port";
     let state_dir_opt = "state-dir";
+    let log_to_file_opt = "log-to-file";
     let launchd_opt = "launchd";
 
     let matches = App::new("duwop")
@@ -78,6 +79,9 @@ fn parse_options() -> Opt {
                 .hidden(true)
                 .takes_value(true)
                 .env("DUWOP_APP_STATE_DIR"),
+            Arg::with_name(log_to_file_opt)
+                .long(log_to_file_opt)
+                .help("Log to file instead of stderr, on by default when using launchd"),
             Arg::with_name(launchd_opt)
                 .long(launchd_opt)
                 .conflicts_with(http_port_opt)
@@ -94,11 +98,30 @@ fn parse_options() -> Opt {
             MANAGEMENT_PORT,
         ),
         state_dir: parse_val_with_default::<PathBuf>(state_dir_opt, &matches, default_state_dir),
+        log_to_file: matches.is_present(log_to_file_opt),
         launchd: matches.is_present(launchd_opt),
     }
 }
 
 fn run(opt: Opt) -> Result<(), Error> {
+    let mut logdir = dirs::home_dir().expect("error extracting home directory");
+    logdir.push(LOG_DIR);
+    // TODO: can we do it (enable log to file if launchd) automatically with clap?
+    let log_handler = if opt.log_to_file || opt.launchd {
+        Logger::with_env_or_str(LOG_LEVEL)
+            .log_to_file()
+            .directory(logdir)
+            .rotate(
+                Criterion::Size(10_000_000),
+                Naming::Numbers,
+                Cleanup::KeepLogFiles(4),
+            )
+            .start()
+            .unwrap()
+    } else {
+        Logger::with_env_or_str(LOG_LEVEL).start().unwrap()
+    };
+    let locked_handler = Arc::new(RwLock::new(log_handler));
     info!("Starting...");
     debug!("running with options: {:#?}", opt);
     let mut app_state = AppState::new(&opt.state_dir);
@@ -106,7 +129,11 @@ fn run(opt: Opt) -> Result<(), Error> {
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(opt.dns_port)?;
     let web_server = web::new_server(opt.http_port, opt.launchd, Arc::clone(&locked));
-    let management_server = ManagementServer::run(opt.management_port, Arc::clone(&locked));
+    let management_server = ManagementServer::run(
+        opt.management_port,
+        Arc::clone(&locked),
+        Arc::clone(&locked_handler),
+    );
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
