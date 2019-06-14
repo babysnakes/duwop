@@ -121,6 +121,7 @@ impl Server {
     }
 
     fn set_log_level(&mut self, level: LogLevel) -> Result<(), Error> {
+        info!("setting log level to: {:?}", level);
         let locked = Arc::clone(&self.log_handler);
         let mut handler = locked.write().unwrap();
         let spec = match level {
@@ -133,6 +134,7 @@ impl Server {
     }
 
     fn reset_log_level(&mut self) -> Result<(), Error> {
+        info!("resetting log level");
         let locked = Arc::clone(&self.log_handler);
         let mut handler = locked.write().unwrap();
         let spec = LogSpecification::env_or_parse(LOG_LEVEL)?;
