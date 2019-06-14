@@ -4,10 +4,10 @@
 
 This project aims to perform the following tasks:
 
-* Serve local directories as HTTP (configure via CLI or web interface).
+* Serve local directories as HTTP.
 * Reverse proxy local running services.
-* Possibly easy configuration via web interface for reverse proxy docker
-  containers.
+* Reverse proxy local docker containers (by container name) provided they serve
+  only one port (so there's no need to specify local ports when running `docker run...`).
 
 It should have the following characteristics:
 
@@ -17,7 +17,11 @@ It should have the following characteristics:
 * Bind to localhost on port 80 (and later 443 - see SSL bullet). We'll achieve
   this (without running as root) by running via launchd. Running on localhost to
   avoid having to deal with various security issues.
-* Web interface to configure directories/ports/docker containers.
+* Configuration for serving directories and reverse proxy is controlled by soft
+  links and files containing the value in the first line. These files/links
+  should be in a specific directory.
+* Command line to setup / configure / control the various aspects of the
+  service.
 * Possibly SSL termination without having to hassle with invalid certificates.
   Check [puma dev][pd] for example how to perform this.
 
@@ -34,25 +38,31 @@ Currently we have (all should be considered beta at best):
       `index.html` files inside directories)
     * Proxy local ports - basic proxy - no support for advance features like
       websockets. Not tested much.
-* Can only read json configurations file. Any config modifications should be
-  performed manually and the service should be restarted with `launchctl`.
+* Reads configuration from _state directory_ with the option to reload from the
+  client.
+* Logs to rotating logs.
+* Client app (`duwopctl`) that can perform the following tasks:
+    * Reload configuration from disk.
+    * Set log level in runtime.
 
 Setup instructions:
 
-* Build the project (`cargo build --release`) and copy `target/release/duwop` to
-  somewhere in your path.
-* `mkdir $HOME/.duwop`
-* Copy `extra/devstate-sample.json` to `$HOME/.duwop/state.json` and follow the
-  examples in the file to add real directories/ports to serve/proxy. Note that
-  the keys indicate hostname in the `.test` domain (so `example` key means you
-  have to access `example.test`).
+* Build the project (`cargo build --release`) and copy `target/release/duwop`
+  and `target/release/duwopctl` to somewhere in your path.
+* `mkdir -p $HOME/.duwop/logs`
+* `mkdir $HOME/.duwop/state`
+* Setup the state directory:
+    * Link any directories you want to web serve to the `state` directory
+      created above named by the hostname without the `.test.` domain - to serve
+      `/my/web/directory` as `myweb.test` run `ln -s /my/web/directory/
+      $HOME/.duwop/state/myweb`.
+    * Configure reverse proxy by creating a file named `<hostname>.proxy` with
+      the first line pointing to the required http address - to reverse proxy a
+      service running on localhost port 3000 as `http://myproxy.test/` create a
+      `$HOME/.duwop/state/myproxy.proxy` file with the first line containing
+      `http://localhost:3000/`. Other lines are ignored.
 * Copy `extra/org.babysnakes.duwop.plist` to `~/Library/LaunchAgents/` and edit:
     * Configure `/path/to/duwop`.
-    * You can change the `RUST_LOG` value to something else or completely remove
-      these two lines. It's only for debugging.
-    * Set the `/path/to/stderr/file` and `/path/to/stdout/file` to a valid
-      directory (optionally inside of `~/.duwop/` - I think you have to put
-      explicit paths, there's no shell expansion in launchd files)
     * *Do not* change the `127.0.0.1` hostname. This is a _major_ security issue
       as this project does not force authentication in any way! We rely on you
       listening only on ports unavailable from outside.
@@ -71,10 +81,15 @@ Enjoy
 
 ### Development environment setup
 
-* Copy `extra/.env-sample` to `.env` in the current directory and edit to your
+* Create `devstate` directory at the repository root and add to it a few links
+  to directories with html files and a few files that contains a url to proxy on
+  the first line - other lines are ignored - e.g. a `local3000.proxy` file with
+  `http://localhost:3000/` as the first line. The key (that is hostname) is the
+  name of the directory or the name of the file without the `.proxy` extension.
+  Other files will be ignored but you can add them as you wish.
+* Copy `extra/env-sample` to `.env` in the current directory and edit to your
   liking.
-* Copy `extra/devstate-sample.json` to `devstate.json` (or any other name and
-  update the `.env` file) and edit keys with paths for static serving.
+* Do not use `--log-to-file` option as the log directory is hard-coded.
 
 ### Contributors
 

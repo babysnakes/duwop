@@ -31,7 +31,7 @@ pub(super) fn serve(
 
 // Read the file completely and construct a 200 response with that file as
 // the body of the response.
-fn read_file<'a>(
+fn read_file(
     file: tokio_fs::File,
     path: PathBuf,
 ) -> impl Future<Item = Response<Body>, Error = Error> {
@@ -50,7 +50,7 @@ fn read_file<'a>(
 }
 
 fn file_path_mime(file_path: &Path) -> mime::Mime {
-    let mime_type = match file_path.extension().and_then(std::ffi::OsStr::to_str) {
+    match file_path.extension().and_then(std::ffi::OsStr::to_str) {
         Some("html") => mime::TEXT_HTML,
         Some("css") => mime::TEXT_CSS,
         Some("js") => mime::TEXT_JAVASCRIPT,
@@ -59,8 +59,7 @@ fn file_path_mime(file_path: &Path) -> mime::Mime {
         Some("svg") => mime::IMAGE_SVG,
         Some("wasm") => "application/wasm".parse::<mime::Mime>().unwrap(),
         _ => mime::TEXT_PLAIN,
-    };
-    mime_type
+    }
 }
 
 /// returns the path for the requested file relative to the root dir after
@@ -75,11 +74,11 @@ fn file_path_mime(file_path: &Path) -> mime::Mime {
 fn local_path_for_request(request_path: &str, root_dir: &Path) -> Option<PathBuf> {
     // This was in the original code and it seems like a good idea (although we're
     // doing extra check to prevent traversal directory attack later)
-    if !request_path.starts_with("/") {
+    if !request_path.starts_with('/') {
         return None;
     }
     // Trim off the url parameters
-    let end = request_path.find('?').unwrap_or(request_path.len());
+    let end = request_path.find('?').unwrap_or_else(|| request_path.len());
     let request_path = &request_path[0..end];
 
     let mut path = root_dir.to_owned();

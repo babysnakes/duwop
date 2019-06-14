@@ -1,3 +1,5 @@
+// TODO: may enable these when I'll understand the math better
+#![allow(clippy::cast_lossless, clippy::identity_op)]
 use std::io::Result;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -296,7 +298,7 @@ impl DnsHeader {
         )?;
 
         buffer.write_u8(
-            (self.rescode.clone() as u8)
+            (self.rescode as u8)
                 | ((self.checking_disabled as u8) << 4)
                 | ((self.authed_data as u8) << 5)
                 | ((self.z as u8) << 6)
@@ -324,8 +326,8 @@ pub enum QueryType {
 }
 
 impl QueryType {
-    pub fn to_num(&self) -> u16 {
-        match *self {
+    pub fn to_num(self) -> u16 {
+        match self {
             QueryType::UNKNOWN(x) => x,
             QueryType::A => 1,
             QueryType::NS => 2,
@@ -357,10 +359,7 @@ pub struct DnsQuestion {
 
 impl DnsQuestion {
     pub fn new(name: String, qtype: QueryType) -> DnsQuestion {
-        DnsQuestion {
-            name: name,
-            qtype: qtype,
-        }
+        DnsQuestion { name, qtype }
     }
 
     pub fn read(&mut self, buffer: &mut BytePacketBuffer) -> Result<()> {
@@ -450,11 +449,7 @@ impl DnsRecord {
                     ((raw_addr >> 0) & 0xFF) as u8,
                 );
 
-                Ok(DnsRecord::A {
-                    domain: domain,
-                    addr: addr,
-                    ttl: ttl,
-                })
+                Ok(DnsRecord::A { domain, addr, ttl })
             }
             QueryType::AAAA => {
                 let raw_addr1 = buffer.read_u32()?;
@@ -472,20 +467,16 @@ impl DnsRecord {
                     ((raw_addr4 >> 0) & 0xFFFF) as u16,
                 );
 
-                Ok(DnsRecord::AAAA {
-                    domain: domain,
-                    addr: addr,
-                    ttl: ttl,
-                })
+                Ok(DnsRecord::AAAA { domain, addr, ttl })
             }
             QueryType::NS => {
                 let mut ns = String::new();
                 buffer.read_qname(&mut ns)?;
 
                 Ok(DnsRecord::NS {
-                    domain: domain,
+                    domain,
                     host: ns,
-                    ttl: ttl,
+                    ttl,
                 })
             }
             QueryType::CNAME => {
@@ -493,9 +484,9 @@ impl DnsRecord {
                 buffer.read_qname(&mut cname)?;
 
                 Ok(DnsRecord::CNAME {
-                    domain: domain,
+                    domain,
                     host: cname,
-                    ttl: ttl,
+                    ttl,
                 })
             }
             QueryType::MX => {
@@ -504,10 +495,10 @@ impl DnsRecord {
                 buffer.read_qname(&mut mx)?;
 
                 Ok(DnsRecord::MX {
-                    domain: domain,
-                    priority: priority,
+                    domain,
+                    priority,
                     host: mx,
-                    ttl: ttl,
+                    ttl,
                 })
             }
             QueryType::SOA => {
@@ -524,25 +515,25 @@ impl DnsRecord {
                 let minimum = buffer.read_u32()?;
 
                 Ok(DnsRecord::SOA {
-                    domain: domain,
-                    m_name: m_name,
-                    r_name: r_name,
-                    serial: serial,
-                    refresh: refresh,
-                    retry: retry,
-                    expire: expire,
-                    minimum: minimum,
-                    ttl: ttl,
+                    domain,
+                    m_name,
+                    r_name,
+                    serial,
+                    refresh,
+                    retry,
+                    expire,
+                    minimum,
+                    ttl,
                 })
             }
             QueryType::UNKNOWN(_) => {
                 buffer.step(data_len as usize)?;
 
                 Ok(DnsRecord::UNKNOWN {
-                    domain: domain,
+                    domain,
                     qtype: qtype_num,
-                    data_len: data_len,
-                    ttl: ttl,
+                    data_len,
+                    ttl,
                 })
             }
         }

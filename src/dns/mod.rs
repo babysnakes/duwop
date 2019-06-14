@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 mod protocol;
 
 use protocol::*;
@@ -19,8 +18,9 @@ pub struct DNSServer {
 impl DNSServer {
     pub fn new(port: u16) -> Result<DNSServer> {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+        info!("listening for dns requests on {}", &addr);
         let socket = UdpSocket::bind(&addr)?;
-        Ok(DNSServer { socket: socket })
+        Ok(DNSServer { socket })
     }
 }
 
@@ -52,10 +52,10 @@ fn lookup(request: &DnsPacket) -> Result<DnsPacket> {
     trace!("received query (id: {}): {:?}", &id, &request);
     let mut response = DnsPacket::new();
     response.header.response = true;
-    response.header.id = id.clone();
+    response.header.id = *id;
     response.header.recursion_desired = request.header.recursion_desired;
 
-    if &request.questions.len() < &1 {
+    if request.questions.is_empty() {
         response.header.rescode = ResultCode::NOTIMP;
         return Ok(response);
     }

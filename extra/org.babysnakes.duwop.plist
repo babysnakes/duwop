@@ -19,15 +19,6 @@
         <string>80</string>
       </dict>
     </dict>
-    <key>EnvironmentVariables</key>
-    <dict>
-      <key>RUST_LOG</key>
-      <string>duwop=trace,tokio=warn</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/path/to/stdout/file</string>
-    <key>StandardErrorPath</key>
-    <string>/path/to/stderr/file</string>
     <key>RunAtLoad</key>
     <true/>
   </dict>
