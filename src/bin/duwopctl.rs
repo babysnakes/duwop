@@ -10,6 +10,7 @@ use dotenv;
 use failure::Error;
 use flexi_logger;
 use log::debug;
+use url::Url;
 
 #[derive(Debug)]
 struct Opt {
@@ -28,6 +29,10 @@ enum Command {
     Link {
         web_dir: PathBuf,
         name: String,
+    },
+    Proxy {
+        name: String,
+        proxy_url: Option<Url>,
     },
 }
 
@@ -48,6 +53,8 @@ struct Names<'a> {
     custom_level_opt: &'a str,
     link_source: &'a str,
     link_name: &'a str,
+    proxy_url: &'a str,
+    proxy_name: &'a str,
 }
 
 impl<'a> Names<'a> {
@@ -59,6 +66,8 @@ impl<'a> Names<'a> {
             custom_level_opt: "custom-level",
             link_source: "directory-to-serve",
             link_name: "name",
+            proxy_name: "name",
+            proxy_url: "URL",
         }
     }
 }
@@ -125,6 +134,22 @@ fn create_cli_app<'a>(names: &'a Names) -> App<'a, 'a> {
                     Arg::with_name(names.link_source)
                         .help("The directory to serve, if omitted the current directory is used")
                         .required(false),
+                ]),
+            SubCommand::with_name("proxy")
+                .about("Reverse proxy a URL")
+                .long_about("\
+                    This command will add configuration to reverse proxy a provided URL \
+                    as http://<name>.test/. If no proxy option is provided the user will \
+                    be prompted to insert one. The name should not include the `.test` \
+                    domain. \
+                ")
+                .args(&[
+                    Arg::with_name(names.proxy_name)
+                        .help("The hostname to use as reverse proxy")
+                        .required(true),
+                    Arg::with_name(names.proxy_url)
+                        .help("The URL to reverse proxy to, you will be prompted for it if not specified")
+                        .required(false),
                 ])
         ])
 }
@@ -144,6 +169,20 @@ fn parse_options(app: App, names: &Names) -> Result<Opt, Error> {
                 web_dir: std::env::current_dir()?,
                 // protected by required argument.
                 name: cmd_m.value_of(names.link_name).unwrap().to_string(),
+            }
+        }
+        ("proxy", Some(cmd_m)) => {
+            use clap::{Error, ErrorKind};
+
+            let url = cmd_m.value_of(names.proxy_url).map(|url_str| {
+                let msg = format!("unable to parse input ({}) as url", &url_str);
+                Url::parse(url_str)
+                    .map_err(|_| Error::with_description(&msg, ErrorKind::InvalidValue))
+                    .unwrap_or_else(|e| e.exit())
+            });
+            subcommand = Command::Proxy {
+                name: cmd_m.value_of(names.proxy_name).unwrap().to_string(),
+                proxy_url: url,
             }
         }
         _ => unreachable!(), // we use SubCommand::Required.
@@ -168,6 +207,12 @@ fn run(mut opt: Opt) -> Result<(), Error> {
         Command::Link { web_dir, name } => {
             opt.state_dir.push(name);
             link_web_directory(opt.state_dir, web_dir)?;
+            run_reload(opt.mgmt_port)
+        }
+        Command::Proxy { name, proxy_url } => {
+            let mut proxy_file_path = opt.state_dir;
+            proxy_file_path.push(format!("{}.proxy", name));
+            create_proxy_file(proxy_file_path, proxy_url)?;
             run_reload(opt.mgmt_port)
         }
     }
