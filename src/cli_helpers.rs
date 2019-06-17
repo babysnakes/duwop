@@ -1,4 +1,6 @@
 use clap::ErrorKind;
+use failure::Error;
+use log::error;
 
 /// A helper around converting _clap_ matches to the requested type with typed
 /// default value. It seems redundant because of clap's `value_t` macro, however
@@ -30,5 +32,12 @@ where
             }
         },
         None => default,
+    }
+}
+
+pub fn print_full_error(err: Error) {
+    error!("{}", err);
+    for cause in err.iter_causes() {
+        error!("{}", cause);
     }
 }

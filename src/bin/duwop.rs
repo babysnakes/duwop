@@ -32,18 +32,12 @@ fn main() {
         Ok(_) => {
             info!("Stopping...");
         }
-        Err(err) => {
-            error!("{}", err);
-            for cause in err.iter_causes() {
-                error!("{}", cause);
-            }
-        }
+        Err(err) => print_full_error(err),
     }
 }
 
 fn parse_options() -> Opt {
-    let mut default_state_dir = dirs::home_dir().expect("Couldn't extract home directory");
-    default_state_dir.push(STATE_DIR);
+    let default_state_dir = state_dir();
     let dns_port_opt = "dns-port";
     let http_port_opt = "http-port";
     let management_port_opt = "mgmt-port";
