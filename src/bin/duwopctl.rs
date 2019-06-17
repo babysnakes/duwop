@@ -13,22 +13,19 @@ use log::debug;
 
 #[derive(Debug)]
 struct Opt {
+    mgmt_port: u16,
+    state_dir: PathBuf,
     command: Command,
 }
 
 #[derive(Debug)]
 enum Command {
-    Reload {
-        mgmt_port: u16,
-    },
+    Reload,
     Log {
-        mgmt_port: u16,
         cmd: LogCommand,
         custom_level: Option<String>,
     },
     Link {
-        mgmt_port: u16,
-        state_dir: PathBuf,
         web_dir: PathBuf,
         name: String,
     },
@@ -78,31 +75,31 @@ fn main() {
 }
 
 fn create_cli_app<'a>(names: &'a Names) -> App<'a, 'a> {
-    let management_port_arg = Arg::with_name(names.management_port_opt)
-        .long(names.management_port_opt)
-        .help("alternative management port")
-        .value_name("PORT")
-        .takes_value(true)
-        .env("DUWOP_MANAGEMENT_PORT");
-
-    // Development only. Not for regular use.
-    let state_dir_arg = Arg::with_name(names.state_dir_opt)
-        .long(names.state_dir_opt)
-        .hidden(true)
-        .takes_value(true)
-        .env("DUWOP_APP_STATE_DIR");
-
     App::new("duwopctl")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .version(VERSION)
         .about("Configure/Manage duwop service.")
+        .args(&[
+            Arg::with_name(names.management_port_opt)
+                .long(names.management_port_opt)
+                .help("alternative management port")
+                .value_name("PORT")
+                .global(true)
+                .takes_value(true)
+                .env("DUWOP_MANAGEMENT_PORT"),
+            // Development only. Not for regular use.
+            Arg::with_name(names.state_dir_opt)
+                .long(names.state_dir_opt)
+                .hidden(true)
+                .takes_value(true)
+                .global(true)
+                .env("DUWOP_APP_STATE_DIR"),
+        ])
         .subcommands(vec![
             SubCommand::with_name("reload")
-                .about("Reload duwop configuration from disk")
-                .arg(&management_port_arg),
+                .about("Reload duwop configuration from disk"),
             SubCommand::with_name("log")
                 .about("Modify log level on duwop service")
-                .arg(&management_port_arg)
                 .args(&[
                     Arg::with_name(names.log_level_opt)
                         .help("Log level to switch the service to (reset to return to default)")
@@ -122,8 +119,6 @@ fn create_cli_app<'a>(names: &'a Names) -> App<'a, 'a> {
                     domain. \
                 ")
                 .args(&[
-                    management_port_arg,
-                    state_dir_arg,
                     Arg::with_name(names.link_name)
                         .help("The hostname to serve it as")
                         .required(true),
@@ -138,40 +133,14 @@ fn parse_options(app: App, names: &Names) -> Result<Opt, Error> {
     let matches = app.get_matches();
     let subcommand: Command;
     match matches.subcommand() {
-        ("reload", Some(cmd_m)) => {
-            subcommand = Command::Reload {
-                mgmt_port: parse_val_with_default::<u16>(
-                    names.management_port_opt,
-                    &cmd_m,
-                    MANAGEMENT_PORT,
-                ),
-            };
-        }
+        ("reload", Some(_)) => subcommand = Command::Reload,
         ("log", Some(cmd_m)) => {
             let cmd = value_t_or_exit!(cmd_m, names.log_level_opt, LogCommand);
             let custom_level = cmd_m.value_of(names.custom_level_opt).map(String::from);
-            subcommand = Command::Log {
-                mgmt_port: parse_val_with_default::<u16>(
-                    names.management_port_opt,
-                    &cmd_m,
-                    MANAGEMENT_PORT,
-                ),
-                cmd,
-                custom_level,
-            };
+            subcommand = Command::Log { cmd, custom_level };
         }
         ("link", Some(cmd_m)) => {
             subcommand = Command::Link {
-                mgmt_port: parse_val_with_default::<u16>(
-                    names.management_port_opt,
-                    &cmd_m,
-                    MANAGEMENT_PORT,
-                ),
-                state_dir: parse_val_with_default::<PathBuf>(
-                    names.state_dir_opt,
-                    &cmd_m,
-                    state_dir(),
-                ),
                 web_dir: std::env::current_dir()?,
                 // protected by required argument.
                 name: cmd_m.value_of(names.link_name).unwrap().to_string(),
@@ -181,28 +150,25 @@ fn parse_options(app: App, names: &Names) -> Result<Opt, Error> {
     }
     debug!("subcommand: {:?}", subcommand);
     Ok(Opt {
+        mgmt_port: parse_val_with_default::<u16>(
+            names.management_port_opt,
+            &matches,
+            MANAGEMENT_PORT,
+        ),
+        state_dir: parse_val_with_default::<PathBuf>(names.state_dir_opt, &matches, state_dir()),
         command: subcommand,
     })
 }
 
-fn run(opt: Opt) -> Result<(), Error> {
+fn run(mut opt: Opt) -> Result<(), Error> {
     debug!("running with options: {:#?}", opt);
     match opt.command {
-        Command::Reload { mgmt_port } => run_reload(mgmt_port),
-        Command::Log {
-            mgmt_port,
-            cmd,
-            custom_level,
-        } => run_log_command(mgmt_port, cmd, custom_level),
-        Command::Link {
-            mut state_dir,
-            web_dir,
-            name,
-            mgmt_port,
-        } => {
-            state_dir.push(name);
-            link_web_directory(state_dir, web_dir)?;
-            run_reload(mgmt_port)
+        Command::Reload => run_reload(opt.mgmt_port),
+        Command::Log { cmd, custom_level } => run_log_command(opt.mgmt_port, cmd, custom_level),
+        Command::Link { web_dir, name } => {
+            opt.state_dir.push(name);
+            link_web_directory(opt.state_dir, web_dir)?;
+            run_reload(opt.mgmt_port)
         }
     }
 }
