@@ -5,34 +5,95 @@ use duwop::management::{LogLevel, Request};
 
 use std::path::PathBuf;
 
-use clap::{arg_enum, value_t_or_exit, App, AppSettings, Arg, SubCommand};
 use dotenv;
 use failure::Error;
 use flexi_logger;
 use log::debug;
+use structopt::{self, clap::arg_enum, StructOpt};
 use url::Url;
 
-#[derive(Debug)]
-struct Opt {
-    mgmt_port: u16,
-    state_dir: PathBuf,
-    command: Command,
+// Fix verify global options
+#[derive(Debug, StructOpt)]
+#[structopt(name = "duwopctl", author = "", raw(version = "VERSION"))]
+/// Configure/Manage duwop service.
+struct Cli {
+    /// alternative management port
+    #[structopt(
+        long = "mgmt-port",
+        value_name = "PORT",
+        global = true,
+        env = "DUWOP_MANAGEMENT_PORT"
+    )]
+    mgmt_port: Option<u16>,
+
+    #[structopt(
+        long = "state-dir",
+        hidden = true,
+        global = true,
+        env = "DUWOP_APP_STATE_DIR"
+    )]
+    state_dir: Option<PathBuf>,
+
+    #[structopt(subcommand)]
+    command: CliSubCommand,
 }
 
-#[derive(Debug)]
-enum Command {
+#[derive(Debug, StructOpt)]
+enum CliSubCommand {
+    /// Reload duwop configuration from disk.
+    #[structopt(name = "reload", author = "")]
     Reload,
+
+    /// Change log level on the duwop server during runtime.
+    ///
+    /// This command lets you switch log level on the duwop service in runtime.
+    /// It will reset itself once it restarted. Use the 'reset' argument to
+    /// reset to default log level.
+    #[structopt(name = "log", author = "")]
     Log {
-        cmd: LogCommand,
-        custom_level: Option<String>,
+        /// Log level to switch the service to (reset to return to default)
+        #[structopt(
+            name = "log_command",
+            case_insensitive = true,
+            raw(possible_values = "&LogCommand::variants()")
+        )]
+        command: LogCommand,
+
+        /// custom log level (e.g. trace,tokio:warn). valid only if log-level is
+        /// 'custom'
+        #[structopt(raw(required_if = r#""log_command", "custom""#))]
+        level: Option<String>,
     },
+
+    /// Serve directory with web server.
+    ///
+    /// This command will serve the specified target directory (or the current
+    /// directory if none specified) with a web server accessible as
+    /// http://<name>.test/. The name should not include the '.test' domain.
+    #[structopt(name = "link", author = "")]
     Link {
-        web_dir: PathBuf,
+        /// The hostname to serve the directory as
+        #[structopt(name = "name")]
         name: String,
+
+        /// The directory to serve, if omitted the current directory is used
+        #[structopt(name = "source_dir")]
+        source: Option<PathBuf>,
     },
+
+    /// Reverse proxy a URL
+    ///
+    /// This command will serve the specified target directory (or the current
+    /// directory if none specified) with a web server accessible as
+    /// http://<name>.test/. The name should not include the '.test' domain.
+    #[structopt(name = "proxy", author = "")]
     Proxy {
+        /// The hostname to use to proxy the URL
         name: String,
-        proxy_url: Option<Url>,
+
+        /// The URL to reverse proxy to, you will be prompted for it if not
+        /// specified
+        url: Option<Url>,
     },
 }
 
@@ -46,174 +107,38 @@ arg_enum! {
     }
 }
 
-struct Names<'a> {
-    management_port_opt: &'a str,
-    state_dir_opt: &'a str,
-    log_level_opt: &'a str,
-    custom_level_opt: &'a str,
-    link_source: &'a str,
-    link_name: &'a str,
-    proxy_url: &'a str,
-    proxy_name: &'a str,
-}
-
-impl<'a> Names<'a> {
-    fn new() -> Self {
-        Names {
-            management_port_opt: "mgmt-port",
-            state_dir_opt: "state-dir",
-            log_level_opt: "log-level",
-            custom_level_opt: "custom-level",
-            link_source: "directory-to-serve",
-            link_name: "name",
-            proxy_name: "name",
-            proxy_url: "URL",
-        }
-    }
-}
-
 fn main() {
     dotenv::dotenv().ok();
     flexi_logger::Logger::with_env().start().unwrap();
-    let names = Names::new();
-    let app = create_cli_app(&names);
-    match parse_options(app, &names).and_then(run) {
+    let app = Cli::from_args();
+    match run(app) {
         Ok(_) => {}
         Err(err) => print_full_error(err),
     }
 }
 
-fn create_cli_app<'a>(names: &'a Names) -> App<'a, 'a> {
-    App::new("duwopctl")
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .version(VERSION)
-        .about("Configure/Manage duwop service.")
-        .args(&[
-            Arg::with_name(names.management_port_opt)
-                .long(names.management_port_opt)
-                .help("alternative management port")
-                .value_name("PORT")
-                .global(true)
-                .takes_value(true)
-                .env("DUWOP_MANAGEMENT_PORT"),
-            // Development only. Not for regular use.
-            Arg::with_name(names.state_dir_opt)
-                .long(names.state_dir_opt)
-                .hidden(true)
-                .takes_value(true)
-                .global(true)
-                .env("DUWOP_APP_STATE_DIR"),
-        ])
-        .subcommands(vec![
-            SubCommand::with_name("reload")
-                .about("Reload duwop configuration from disk"),
-            SubCommand::with_name("log")
-                .about("Modify log level on duwop service")
-                .args(&[
-                    Arg::with_name(names.log_level_opt)
-                        .help("Log level to switch the service to (reset to return to default)")
-                        .required(true)
-                        .possible_values(&LogCommand::variants())
-                        .case_insensitive(true),
-                    Arg::with_name(names.custom_level_opt)
-                        .help("custom log level (e.g. trace,tokio:warn). valid only if log-level is 'custom'")
-                        .required_if(&names.log_level_opt, "custom"),
-                ]),
-            SubCommand::with_name("link")
-                .about("Serve directory with web server")
-                .long_about("\
-                    This command will serve the specified target directory (or the \
-                    current directory if none specified) with a web server accessible \
-                    as http://<name>.test/. The name should not include the '.test' \
-                    domain. \
-                ")
-                .args(&[
-                    Arg::with_name(names.link_name)
-                        .help("The hostname to serve it as")
-                        .required(true),
-                    Arg::with_name(names.link_source)
-                        .help("The directory to serve, if omitted the current directory is used")
-                        .required(false),
-                ]),
-            SubCommand::with_name("proxy")
-                .about("Reverse proxy a URL")
-                .long_about("\
-                    This command will add configuration to reverse proxy a provided URL \
-                    as http://<name>.test/. If no proxy option is provided the user will \
-                    be prompted to insert one. The name should not include the `.test` \
-                    domain. \
-                ")
-                .args(&[
-                    Arg::with_name(names.proxy_name)
-                        .help("The hostname to use as reverse proxy")
-                        .required(true),
-                    Arg::with_name(names.proxy_url)
-                        .help("The URL to reverse proxy to, you will be prompted for it if not specified")
-                        .required(false),
-                ])
-        ])
-}
-
-fn parse_options(app: App, names: &Names) -> Result<Opt, Error> {
-    let matches = app.get_matches();
-    let subcommand: Command;
-    match matches.subcommand() {
-        ("reload", Some(_)) => subcommand = Command::Reload,
-        ("log", Some(cmd_m)) => {
-            let cmd = value_t_or_exit!(cmd_m, names.log_level_opt, LogCommand);
-            let custom_level = cmd_m.value_of(names.custom_level_opt).map(String::from);
-            subcommand = Command::Log { cmd, custom_level };
+fn run(app: Cli) -> Result<(), Error> {
+    debug!("running with options: {:#?}", app);
+    let mgmt_port = app.mgmt_port.unwrap_or(MANAGEMENT_PORT);
+    let mut state_dir = app.state_dir.unwrap_or_else(state_dir);
+    match app.command {
+        CliSubCommand::Reload => run_reload(mgmt_port),
+        CliSubCommand::Log { command, level } => run_log_command(mgmt_port, command, level),
+        CliSubCommand::Link { name, source } => {
+            state_dir = state_dir.clone();
+            state_dir.push(name);
+            let source_dir = match source {
+                Some(path) => path,
+                None => std::env::current_dir()?,
+            };
+            link_web_directory(state_dir, source_dir)?;
+            run_reload(mgmt_port)
         }
-        ("link", Some(cmd_m)) => {
-            subcommand = Command::Link {
-                web_dir: std::env::current_dir()?,
-                // protected by required argument.
-                name: cmd_m.value_of(names.link_name).unwrap().to_string(),
-            }
-        }
-        ("proxy", Some(cmd_m)) => {
-            use clap::{Error, ErrorKind};
-
-            let url = cmd_m.value_of(names.proxy_url).map(|url_str| {
-                let msg = format!("unable to parse input ({}) as url", &url_str);
-                Url::parse(url_str)
-                    .map_err(|_| Error::with_description(&msg, ErrorKind::InvalidValue))
-                    .unwrap_or_else(|e| e.exit())
-            });
-            subcommand = Command::Proxy {
-                name: cmd_m.value_of(names.proxy_name).unwrap().to_string(),
-                proxy_url: url,
-            }
-        }
-        _ => unreachable!(), // we use SubCommand::Required.
-    }
-    debug!("subcommand: {:?}", subcommand);
-    Ok(Opt {
-        mgmt_port: parse_val_with_default::<u16>(
-            names.management_port_opt,
-            &matches,
-            MANAGEMENT_PORT,
-        ),
-        state_dir: parse_val_with_default::<PathBuf>(names.state_dir_opt, &matches, state_dir()),
-        command: subcommand,
-    })
-}
-
-fn run(mut opt: Opt) -> Result<(), Error> {
-    debug!("running with options: {:#?}", opt);
-    match opt.command {
-        Command::Reload => run_reload(opt.mgmt_port),
-        Command::Log { cmd, custom_level } => run_log_command(opt.mgmt_port, cmd, custom_level),
-        Command::Link { web_dir, name } => {
-            opt.state_dir.push(name);
-            link_web_directory(opt.state_dir, web_dir)?;
-            run_reload(opt.mgmt_port)
-        }
-        Command::Proxy { name, proxy_url } => {
-            let mut proxy_file_path = opt.state_dir;
+        CliSubCommand::Proxy { name, url } => {
+            let mut proxy_file_path = state_dir.clone();
             proxy_file_path.push(format!("{}.proxy", name));
-            create_proxy_file(proxy_file_path, proxy_url)?;
-            run_reload(opt.mgmt_port)
+            create_proxy_file(proxy_file_path, url)?;
+            run_reload(mgmt_port)
         }
     }
 }
@@ -235,14 +160,13 @@ fn run_log_command(port: u16, cmd: LogCommand, custom_level: Option<String>) -> 
 mod tests {
     use super::*;
 
-    use clap::ErrorKind;
+    use structopt::clap::ErrorKind;
 
     macro_rules! test_cli_ok {
         ($name:ident, $opts:expr) => {
             #[test]
             fn $name() {
-                let names = Names::new();
-                let app = create_cli_app(&names);
+                let app = Cli::clap();
                 assert!(app.get_matches_from_safe($opts).is_ok());
             }
         };
@@ -252,8 +176,7 @@ mod tests {
         ($name:ident, $opts:expr, $expected_error_kind:expr) => {
             #[test]
             fn $name() {
-                let names = Names::new();
-                let app = create_cli_app(&names);
+                let app = Cli::clap();
                 let res = app.get_matches_from_safe($opts);
                 assert!(&res.is_err());
                 assert_eq!(res.unwrap_err().kind, $expected_error_kind)
