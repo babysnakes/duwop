@@ -136,7 +136,7 @@ fn run(app: Cli) -> Result<(), Error> {
         }
         CliSubCommand::Proxy { name, url } => {
             let mut proxy_file_path = state_dir.clone();
-            proxy_file_path.push(format!("{}.proxy", name));
+            proxy_file_path.push(name);
             create_proxy_file(proxy_file_path, url)?;
             run_reload(mgmt_port)
         }

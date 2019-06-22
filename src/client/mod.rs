@@ -52,7 +52,7 @@ pub fn create_proxy_file(proxy_file: PathBuf, url: Option<Url>) -> Result<(), Er
             Url::parse(&s).context(format!("could not parse url from: {}", &s))?
         }
     };
-    std::fs::write(&proxy_file, url.as_str())
+    std::fs::write(&proxy_file, format!("proxy:{}", url.as_str()))
         .context(format!("writing url to {:?}", &proxy_file))
         .map_err(Error::from)?;
     info!("saved proxy file: {:?}", &proxy_file);

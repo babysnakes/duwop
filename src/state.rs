@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{read_dir, DirEntry, File};
+use std::fs::{read_dir, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use failure::{Error, ResultExt};
 use log::{debug, info, trace, warn};
@@ -18,9 +18,52 @@ pub enum ServiceType {
     InvalidConfig(String),
 }
 
+impl ServiceType {
+    fn parse_config<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        if path.as_ref().is_dir() {
+            debug!("found directory {:?}", path.as_ref());
+            std::fs::canonicalize(path)
+                .map(|path| Ok(ServiceType::StaticFiles(path.into_os_string())))?
+        } else {
+            debug!("parsing file {:?}", path.as_ref());
+            let first_line = read_first_line_from_file(path)?;
+            let mut parts = first_line.splitn(2, ':');
+            match parts.next() {
+                Some("proxy") => Ok(ServiceType::parse_proxy(parts.next())),
+                Some(directive) => Ok(ServiceType::InvalidConfig(format!(
+                    "invalid directive: '{}'",
+                    directive
+                ))),
+                None => Ok(ServiceType::InvalidConfig(format!("missing directive"))),
+
+            }
+        }
+    }
+
+    fn parse_proxy(url_option: Option<&str>) -> Self {
+        match url_option {
+            Some(url_str) => match Url::parse(url_str) {
+                Ok(url) => ServiceType::ReverseProxy(url),
+                Err(err) => {
+                    warn!("error parsing url ({}): {}", url_str, err);
+                    ServiceType::InvalidConfig(format!("not a valid URL: {}", url_str))
+                }
+            },
+            None => ServiceType::InvalidConfig("missing URL".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ServiceConfigError {
+    NameError(OsString),
+    IoError(String),
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub services: HashMap<String, ServiceType>,
+    errors: Vec<ServiceConfigError>,
     path: PathBuf,
 }
 
@@ -30,6 +73,7 @@ impl AppState {
     pub fn new(path: &PathBuf) -> Self {
         AppState {
             path: path.to_path_buf(),
+            errors: vec![],
             services: HashMap::new(),
         }
     }
@@ -39,6 +83,7 @@ impl AppState {
     pub fn from_services(services: HashMap<String, ServiceType>) -> Self {
         AppState {
             services,
+            errors: vec![],
             path: PathBuf::new(),
         }
     }
@@ -46,101 +91,123 @@ impl AppState {
     pub fn load_services(&mut self) -> Result<(), Error> {
         info!("loading state from file system");
         debug!("loading services from {:?}", &self.path);
-        let services = read_dir(&self.path).context(format!("error reading directory ({:?})", &self.path.to_path_buf().into_os_string()))?
-            .filter_map(|item| {
-                let entry = item.unwrap();
-                let name = entry.file_name();
-                let path = entry.path();
-                match (name.clone().into_string(), path.is_dir(), path.extension()) {
-                    (Err(_), _, _) => {
-                        // not sure it's even possible to create non utf filenames...
-                        warn!(
-                            "unsupported (NON UTF) file name: ({:?})! You have to delete it manually!",
-                            path.into_os_string(),
-                        );
-                        None
-                    },
-                    (Ok(key), true, _) => {
-                        debug!("found directory: {}", key);
-                        match extract_path_of_symlink_or_file(entry) {
-                            Ok(path) => {
-                                debug!("resolved directory to {:?}", path);
-                                Some((key, ServiceType::StaticFiles(path)))
-                            },
-                            Err(e) => {
-                                let message = format!("error extracting directory info: {}", e);
-                                warn!("{}", message);
-                                Some((key, ServiceType::InvalidConfig(message)))
-                            },
+        let mut services = HashMap::new();
+        let mut errors = vec![];
+
+        for entry in read_dir(&self.path).context(format!(
+            "reading state directory ({:?})",
+            &self.path.to_path_buf().into_os_string()
+        ))? {
+            debug!("parsing entry: {:?}", entry);
+            let entry = entry?;
+            let name = entry.file_name();
+            let path = entry.path();
+            match name.clone().into_string() {
+                Ok(key) => {
+                    match ServiceType::parse_config(path) {
+                        Ok(service_type) => {
+                            services.insert(key, service_type);
+                        }
+                        Err(err) => {
+                            warn!("received error from parse_config: {}", err);
+                            errors.push(ServiceConfigError::IoError(format!("{}", err)));
                         }
                     }
-                    (Ok(key), false, Some(ext)) => match ext.to_str() {
-                        Some("proxy") if key.len() > 6 => {
-                            let short_key = &key[..key.len() - 6];
-                            match extract_url_from_proxy_file(path) {
-                            Ok(url) => {
-                                debug!("found proxy {} pointing at {}", key, url);
-                                Some((short_key.to_string(), ServiceType::ReverseProxy(url)))
-                            }
-                            Err(e) => {
-                                let message = format!("error parsing Url from '{}': {}", key, e);
-                                warn!("{}", message);
-                                Some((short_key.to_string(), ServiceType::InvalidConfig(message)))
-                            },
-                        }},
-                        _ => {
-                            warn!("found unsupported file '{}', ignoring.", key);
-                            Some((key, ServiceType::InvalidFile))
-                        },
-                    },
-                    (Ok(key), false, _) => {
-                        warn!("found unsupported file '{}', ignoring.", key);
-                        Some((key, ServiceType::InvalidFile))
-                    },
-                }
-            })
-            .collect::<HashMap<String, ServiceType>>();
-        trace!("loaded services: {:#?}", services);
+                },
+                Err(_) => {
+                    warn!("encountered a non utf-8 filename: {:?}", name.clone());
+                    errors.push(ServiceConfigError::NameError(name));
+                },
+            }
+        };
+
+        self.errors = errors;
         self.services = services;
+        trace!("parsed state: {:#?}", &self);
         Ok(())
     }
 }
 
-/// Reads the **first** line of the supplied path and tries to parse it as Url.
-/// Other lines are ignored.
-fn extract_url_from_proxy_file(path: PathBuf) -> Result<Url, Error> {
-    let f = File::open(&path).context(format!(
-        "opening proxy config file '{:?}'",
-        &path.as_os_str()
-    ))?;
+fn read_first_line_from_file<P: AsRef<Path>>(path: P) -> std::io::Result<String> {
+    let f = File::open(&path)?;
     let mut rdr = BufReader::new(f);
     let mut first_line = String::new();
-    rdr.read_line(&mut first_line)
-        .context(format!("reading first line of '{:?}", &path.as_os_str()))?;
-    Url::parse(&first_line)
-        .context(format!(
-            "parsing url from '{}' (from file: {:?}",
-            &first_line,
-            &path.as_os_str()
-        ))
-        .map_err(Error::from)
+    rdr.read_line(&mut first_line)?;
+    Ok(first_line.trim_end().to_owned())
 }
 
-fn extract_path_of_symlink_or_file(entry: DirEntry) -> Result<OsString, Error> {
-    let file_type = entry
-        .file_type()
-        .context(format!("extracting info on {:?}", entry.file_name()))?;
-    if file_type.is_symlink() {
-        let linked = entry.path().read_link()?;
-        linked
-            .canonicalize()
-            .context(format!("resolving symlink {:?}", entry.file_name()))?;
-        Ok(linked.into_os_string())
-    } else {
-        warn!(
-            "{:?} is not a symbolic link. It's better to define symbolic link!",
-            entry.file_name()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_fs::prelude::*;
+
+    #[test]
+    fn parse_config_extracts_links_from_directories() {
+        let source_dir = std::env::current_dir().unwrap();
+        // TODO: this will fail if working directory is more then one level of
+        // symlink, hopefully it won't happen.
+        let source_path = match source_dir.read_link() {
+            Ok(path) => path,
+            Err(_) => source_dir,
+        };
+        let state_dir = assert_fs::TempDir::new().unwrap();
+        let mut link_path = state_dir.path().to_path_buf();
+        link_path.push("test");
+        println!("source: {:?}\ntarget: {:?}", &source_path, &link_path);
+        std::os::unix::fs::symlink(&source_path, &link_path).unwrap();
+        assert_eq!(
+            ServiceType::parse_config(link_path).unwrap(),
+            ServiceType::StaticFiles(source_path.into_os_string())
         );
-        Ok(entry.path().into_os_string())
+        state_dir.close().unwrap();
+    }
+
+    #[test]
+    fn parse_config_reads_proxy_files_correctly() {
+        let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
+        file.write_str("proxy:http://url/").unwrap();
+        assert_eq!(
+            ServiceType::parse_config(file.path()).unwrap(),
+            ServiceType::ReverseProxy(Url::parse("http://url/").unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_config_returns_invalid_config_if_proxy_with_invalid_url() {
+        let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
+        file.write_str("proxy:localhost").unwrap();
+        match ServiceType::parse_config(file.path()) {
+            Ok(ServiceType::InvalidConfig(e)) => {
+                assert!(e.contains("not a valid URL"), "wrong InvalidConfig message");
+            }
+            other => panic!("bad response ({:?}) from parse_config", other),
+        };
+    }
+
+    #[test]
+    fn parse_config_returns_invalid_config_if_proxy_with_no_url() {
+        let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
+        file.write_str("proxy").unwrap();
+        match ServiceType::parse_config(file.path()) {
+            Ok(ServiceType::InvalidConfig(e)) => {
+                assert!(e.contains("missing URL"), "wrong InvalidConfig message");
+            }
+            other => panic!("returned bad response: {:?}", other),
+        };
+    }
+
+    #[test]
+    fn parse_config_tags_unknown_directive_as_invalid_config() {
+        let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
+        file.write_str("wrong:something").unwrap();
+        match ServiceType::parse_config(file.path()) {
+            Ok(ServiceType::InvalidConfig(e)) => {
+                assert!(
+                    e.contains("invalid directive"),
+                    "wrong InvalidConfig message"
+                );
+            }
+            other => panic!("returned bad response: {:?}", other),
+        };
     }
 }
