@@ -78,7 +78,6 @@ impl hyper::service::Service for MainService {
                 ServiceType::InvalidConfig(message) => {
                     MainFuture::ErrorResponse(Box::new(displayed_error(message.to_string())))
                 }
-                ServiceType::InvalidFile => MainFuture::ErrorResponse(Box::new(handle_404())),
             },
         }
     }
@@ -237,7 +236,7 @@ pub mod tests {
     fn respond_correctly_to_static_file_request() {
         let state = construct_state(vec![(
             "project-dir".to_string(),
-            ServiceType::StaticFiles(std::env::current_dir().unwrap().into_os_string()),
+            ServiceType::StaticFiles(std::env::current_dir().unwrap()),
         )]);
         let request = Request::builder()
             .header("host", "project-dir.test")

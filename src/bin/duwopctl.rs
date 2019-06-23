@@ -1,185 +1,136 @@
 use duwop::app_defaults::*;
 use duwop::cli_helpers::*;
-use duwop::management::client::Client as MgmtClient;
-use duwop::management::{LogLevel, Request, Response};
+use duwop::client::*;
 
-use clap::{arg_enum, value_t_or_exit, App, AppSettings, Arg, SubCommand};
+use std::path::PathBuf;
+
 use dotenv;
-use failure::{format_err, Error};
+use failure::Error;
 use flexi_logger;
-use log::{debug, error, info};
+use log::debug;
+use structopt::{self, StructOpt};
+use url::Url;
 
-const MANAGEMENT_PORT_OPT: &str = "mgmt-port";
-const LOG_LEVEL_OPT: &str = "log-level";
-const CUSTOM_LEVEL_OPT: &str = "custom-level";
+#[derive(Debug, StructOpt)]
+#[structopt(name = "duwopctl", author = "", raw(version = "VERSION"))]
+/// Configure/Manage duwop service.
+struct Cli {
+    /// alternative management port
+    #[structopt(
+        long = "mgmt-port",
+        value_name = "PORT",
+        global = true,
+        env = "DUWOP_MANAGEMENT_PORT"
+    )]
+    mgmt_port: Option<u16>,
 
-#[derive(Debug)]
-struct Opt {
-    command: Command,
+    #[structopt(
+        long = "state-dir",
+        hidden = true,
+        global = true,
+        env = "DUWOP_APP_STATE_DIR"
+    )]
+    state_dir: Option<PathBuf>,
+
+    #[structopt(subcommand)]
+    command: CliSubCommand,
 }
 
-#[derive(Debug)]
-enum Command {
-    Reload {
-        mgmt_port: u16,
-    },
+#[derive(Debug, StructOpt)]
+enum CliSubCommand {
+    /// Reload duwop configuration from disk.
+    #[structopt(name = "reload", author = "")]
+    Reload,
+
+    /// Change log level on the duwop server during runtime.
+    ///
+    /// This command lets you switch log level on the duwop service in runtime.
+    /// It will reset itself once it restarted. Use the 'reset' argument to
+    /// reset to default log level.
+    #[structopt(name = "log", author = "")]
     Log {
-        mgmt_port: u16,
-        cmd: LogCommand,
-        custom_level: Option<String>,
-    },
-}
+        /// Log level to switch the service to (reset to return to default)
+        #[structopt(
+            name = "log_command",
+            case_insensitive = true,
+            raw(possible_values = "&LogCommand::variants()")
+        )]
+        command: LogCommand,
 
-arg_enum! {
-    #[derive(Debug, PartialEq)]
-    enum LogCommand {
-        Debug,
-        Trace,
-        Reset,
-        Custom,
-    }
+        /// custom log level (e.g. trace,tokio:warn). valid only if log-level is
+        /// 'custom'
+        #[structopt(raw(required_if = r#""log_command", "custom""#))]
+        level: Option<String>,
+    },
+
+    /// Serve directory with web server.
+    ///
+    /// This command will serve the specified target directory (or the current
+    /// directory if none specified) with a web server accessible as
+    /// http://<name>.test/. The name should not include the '.test' domain.
+    #[structopt(name = "link", author = "")]
+    Link {
+        /// The hostname to serve the directory as
+        #[structopt(name = "name")]
+        name: String,
+
+        /// The directory to serve, if omitted the current directory is used
+        #[structopt(name = "source_dir")]
+        source: Option<PathBuf>,
+    },
+
+    /// Reverse proxy a URL
+    ///
+    /// This command will serve the specified target directory (or the current
+    /// directory if none specified) with a web server accessible as
+    /// http://<name>.test/. The name should not include the '.test' domain.
+    #[structopt(name = "proxy", author = "")]
+    Proxy {
+        /// The hostname to use to proxy the URL
+        name: String,
+
+        /// The URL to reverse proxy to, you will be prompted for it if not
+        /// specified
+        url: Option<Url>,
+    },
 }
 
 fn main() {
     dotenv::dotenv().ok();
     flexi_logger::Logger::with_env().start().unwrap();
-    let app = create_cli_app();
-    let opt = parse_options(app);
-    match run(opt) {
+    let app = Cli::from_args();
+    match run(app) {
         Ok(_) => {}
-        Err(err) => {
-            error!("{}", err);
-            for cause in err.iter_causes() {
-                error!("{}", cause);
-            }
-        }
+        Err(err) => print_full_error(err),
     }
 }
 
-fn create_cli_app() -> App<'static, 'static> {
-    let management_port_arg = Arg::with_name(MANAGEMENT_PORT_OPT)
-        .long(MANAGEMENT_PORT_OPT)
-        .help("alternative management port")
-        .value_name("PORT")
-        .takes_value(true)
-        .env("DUWOP_MANAGEMENT_PORT");
-
-    App::new("duwopctl")
-        .setting(AppSettings::SubcommandRequiredElseHelp)
-        .version(VERSION)
-        .about("Configure/Manage duwop service.")
-        .subcommands(vec![
-            SubCommand::with_name("reload")
-                .about("Reload duwop configuration from disk")
-                .arg(&management_port_arg),
-            SubCommand::with_name("log")
-                .about("Modify log level on duwop service")
-                .arg(&management_port_arg.global(true))
-                .args(&[
-                    Arg::with_name(LOG_LEVEL_OPT)
-                        .help("Log level to switch the service to (reset to return to default)")
-                        .required(true)
-                        .possible_values(&LogCommand::variants())
-                        .case_insensitive(true),
-                    Arg::with_name(CUSTOM_LEVEL_OPT)
-                        .help("custom log level (e.g. trace,tokio:warn). valid only if log-level is 'custom'")
-                        .required_if(&LOG_LEVEL_OPT, "custom"),
-                ])
-        ])
-}
-
-fn parse_options(app: App) -> Opt {
-    let matches = app.get_matches();
-    let subcommand: Command;
-    match matches.subcommand() {
-        ("reload", Some(cmd_m)) => {
-            subcommand = Command::Reload {
-                mgmt_port: parse_val_with_default::<u16>(
-                    MANAGEMENT_PORT_OPT,
-                    &cmd_m,
-                    MANAGEMENT_PORT,
-                ),
-            };
+fn run(app: Cli) -> Result<(), Error> {
+    debug!("running with options: {:#?}", app);
+    let mgmt_port = app.mgmt_port.unwrap_or(MANAGEMENT_PORT);
+    let state_dir = app.state_dir.unwrap_or_else(state_dir);
+    let duwop_client = DuwopClient::new(mgmt_port, state_dir);
+    match app.command {
+        CliSubCommand::Reload => duwop_client.reload_server_configuration(),
+        CliSubCommand::Log { command, level } => duwop_client.run_log_command(command, level),
+        CliSubCommand::Link { name, source } => {
+            duwop_client.create_static_file_configuration(name, source)
         }
-        ("log", Some(cmd_m)) => {
-            let cmd = value_t_or_exit!(cmd_m, LOG_LEVEL_OPT, LogCommand);
-            let custom_level = cmd_m.value_of(CUSTOM_LEVEL_OPT).map(String::from);
-            subcommand = Command::Log {
-                mgmt_port: parse_val_with_default::<u16>(
-                    MANAGEMENT_PORT_OPT,
-                    &cmd_m,
-                    MANAGEMENT_PORT,
-                ),
-                cmd,
-                custom_level,
-            };
-        }
-        _ => unreachable!(), // we use SubCommand::Required.
+        CliSubCommand::Proxy { name, url } => duwop_client.create_proxy_configuration(name, url),
     }
-    debug!("subcommand: {:?}", subcommand);
-    Opt {
-        command: subcommand,
-    }
-}
-
-fn run(opt: Opt) -> Result<(), Error> {
-    debug!("running with options: {:#?}", opt);
-    match opt.command {
-        Command::Reload { mgmt_port } => run_reload(mgmt_port),
-        Command::Log {
-            mgmt_port,
-            cmd,
-            custom_level,
-        } => run_log_command(mgmt_port, cmd, custom_level),
-    }
-}
-
-fn process_client_response(result: Result<Response, Error>) -> Result<(), Error> {
-    match result {
-        Ok(resp) => {
-            let msg = resp.serialize();
-            match resp {
-                Response::Done => {
-                    info!("{}", msg);
-                    Ok(())
-                }
-                Response::Error(_) => Err(format_err!("Error from server: {}", msg)),
-            }
-        }
-        Err(err) => Err(err),
-    }
-}
-
-fn run_reload(port: u16) -> Result<(), Error> {
-    let client = MgmtClient::new(port);
-    process_client_response(client.run_client_command(Request::ReloadState))
-}
-
-fn run_log_command(port: u16, cmd: LogCommand, custom_level: Option<String>) -> Result<(), Error> {
-    let client = MgmtClient::new(port);
-    let request = match cmd {
-        LogCommand::Debug => Request::SetLogLevel(LogLevel::DebugLevel),
-        LogCommand::Trace => Request::SetLogLevel(LogLevel::TraceLevel),
-        LogCommand::Custom => {
-            let level = custom_level.unwrap(); // should be protected by clap 'requires'
-            Request::SetLogLevel(LogLevel::CustomLevel(level))
-        }
-        LogCommand::Reset => Request::ResetLogLevel,
-    };
-    process_client_response(client.run_client_command(request))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use clap::ErrorKind;
+    use structopt::clap::ErrorKind;
 
     macro_rules! test_cli_ok {
         ($name:ident, $opts:expr) => {
             #[test]
             fn $name() {
-                let app = create_cli_app();
+                let app = Cli::clap();
                 assert!(app.get_matches_from_safe($opts).is_ok());
             }
         };
@@ -189,7 +140,7 @@ mod tests {
         ($name:ident, $opts:expr, $expected_error_kind:expr) => {
             #[test]
             fn $name() {
-                let app = create_cli_app();
+                let app = Cli::clap();
                 let res = app.get_matches_from_safe($opts);
                 assert!(&res.is_err());
                 assert_eq!(res.unwrap_err().kind, $expected_error_kind)
@@ -198,6 +149,14 @@ mod tests {
     }
 
     test_cli_ok! { accept_custom_log_level, vec!["duwop", "log", "custom", "level"] }
+    test_cli_ok! {
+        accept_link_cmd_with_three_positional_args,
+        vec!["duwop", "link", "/some/path", "name"]
+    }
+    test_cli_ok! {
+        accept_link_cmd_with_two_positional_args,
+        vec!["duwop", "link", "name"]
+    }
 
     test_cli_error! {
         log_custom_requires_level,
