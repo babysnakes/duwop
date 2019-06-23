@@ -11,7 +11,6 @@ use log::debug;
 use structopt::{self, StructOpt};
 use url::Url;
 
-// Fix verify global options
 #[derive(Debug, StructOpt)]
 #[structopt(name = "duwopctl", author = "", raw(version = "VERSION"))]
 /// Configure/Manage duwop service.
