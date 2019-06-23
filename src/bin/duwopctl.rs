@@ -1,7 +1,6 @@
 use duwop::app_defaults::*;
 use duwop::cli_helpers::*;
 use duwop::client::*;
-use duwop::management::{LogLevel, Request};
 
 use std::path::PathBuf;
 
@@ -9,7 +8,7 @@ use dotenv;
 use failure::Error;
 use flexi_logger;
 use log::debug;
-use structopt::{self, clap::arg_enum, StructOpt};
+use structopt::{self, StructOpt};
 use url::Url;
 
 // Fix verify global options
@@ -97,16 +96,6 @@ enum CliSubCommand {
     },
 }
 
-arg_enum! {
-    #[derive(Debug, PartialEq)]
-    enum LogCommand {
-        Debug,
-        Trace,
-        Reset,
-        Custom,
-    }
-}
-
 fn main() {
     dotenv::dotenv().ok();
     flexi_logger::Logger::with_env().start().unwrap();
@@ -120,40 +109,16 @@ fn main() {
 fn run(app: Cli) -> Result<(), Error> {
     debug!("running with options: {:#?}", app);
     let mgmt_port = app.mgmt_port.unwrap_or(MANAGEMENT_PORT);
-    let mut state_dir = app.state_dir.unwrap_or_else(state_dir);
+    let state_dir = app.state_dir.unwrap_or_else(state_dir);
+    let duwop_client = DuwopClient::new(mgmt_port, state_dir);
     match app.command {
-        CliSubCommand::Reload => run_reload(mgmt_port),
-        CliSubCommand::Log { command, level } => run_log_command(mgmt_port, command, level),
+        CliSubCommand::Reload => duwop_client.reload_server_configuration(),
+        CliSubCommand::Log { command, level } => duwop_client.run_log_command(command, level),
         CliSubCommand::Link { name, source } => {
-            state_dir = state_dir.clone();
-            state_dir.push(name);
-            let source_dir = match source {
-                Some(path) => path,
-                None => std::env::current_dir()?,
-            };
-            link_web_directory(state_dir, source_dir)?;
-            run_reload(mgmt_port)
+            duwop_client.create_static_file_configuration(name, source)
         }
-        CliSubCommand::Proxy { name, url } => {
-            let mut proxy_file_path = state_dir.clone();
-            proxy_file_path.push(name);
-            create_proxy_file(proxy_file_path, url)?;
-            run_reload(mgmt_port)
-        }
+        CliSubCommand::Proxy { name, url } => duwop_client.create_proxy_configuration(name, url),
     }
-}
-
-fn run_log_command(port: u16, cmd: LogCommand, custom_level: Option<String>) -> Result<(), Error> {
-    let request = match cmd {
-        LogCommand::Debug => Request::SetLogLevel(LogLevel::DebugLevel),
-        LogCommand::Trace => Request::SetLogLevel(LogLevel::TraceLevel),
-        LogCommand::Custom => {
-            let level = custom_level.unwrap(); // should be protected by clap 'requires'
-            Request::SetLogLevel(LogLevel::CustomLevel(level))
-        }
-        LogCommand::Reset => Request::ResetLogLevel,
-    };
-    run_log(port, request)
 }
 
 #[cfg(test)]

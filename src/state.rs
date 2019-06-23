@@ -4,7 +4,7 @@ use std::fs::{read_dir, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use failure::{Error, ResultExt};
+use failure::{format_err, Error, ResultExt};
 use log::{debug, info, trace, warn};
 use url::Url;
 
@@ -12,8 +12,6 @@ use url::Url;
 pub enum ServiceType {
     StaticFiles(OsString),
     ReverseProxy(Url),
-    /// A file that is not parsed as state - used for cleanup, etc.
-    InvalidFile,
     /// A file with problem - e.g. filename is not UTF-8 or url is not valid.
     InvalidConfig(String),
 }
@@ -34,8 +32,7 @@ impl ServiceType {
                     "invalid directive: '{}'",
                     directive
                 ))),
-                None => Ok(ServiceType::InvalidConfig(format!("missing directive"))),
-
+                None => Ok(ServiceType::InvalidConfig("missing directive".to_string())),
             }
         }
     }
@@ -50,6 +47,25 @@ impl ServiceType {
                 }
             },
             None => ServiceType::InvalidConfig("missing URL".to_string()),
+        }
+    }
+
+    pub fn create(self, path: &PathBuf) -> Result<(), Error> {
+        if path.exists() {
+            return Err(format_err!("refuses to overwrite existing file"));
+        }
+        match self {
+            ServiceType::StaticFiles(source) => std::os::unix::fs::symlink(source, path)
+                .context("linking web directory")
+                .map_err(Error::from),
+            ServiceType::ReverseProxy(url) => {
+                std::fs::write(&path, format!("proxy:{}", url.as_str()))
+                    .context(format!("writing url to {:?}", &path))?;
+                Ok(())
+            }
+            ServiceType::InvalidConfig(_) => Err(format_err!(
+                "it does not make sense to create invalid config"
+            )),
         }
     }
 }
@@ -103,23 +119,21 @@ impl AppState {
             let name = entry.file_name();
             let path = entry.path();
             match name.clone().into_string() {
-                Ok(key) => {
-                    match ServiceType::parse_config(path) {
-                        Ok(service_type) => {
-                            services.insert(key, service_type);
-                        }
-                        Err(err) => {
-                            warn!("received error from parse_config: {}", err);
-                            errors.push(ServiceConfigError::IoError(format!("{}", err)));
-                        }
+                Ok(key) => match ServiceType::parse_config(path) {
+                    Ok(service_type) => {
+                        services.insert(key, service_type);
+                    }
+                    Err(err) => {
+                        warn!("received error from parse_config: {}", err);
+                        errors.push(ServiceConfigError::IoError(format!("{}", err)));
                     }
                 },
                 Err(_) => {
                     warn!("encountered a non utf-8 filename: {:?}", name.clone());
                     errors.push(ServiceConfigError::NameError(name));
-                },
+                }
             }
-        };
+        }
 
         self.errors = errors;
         self.services = services;
@@ -209,5 +223,16 @@ mod tests {
             }
             other => panic!("returned bad response: {:?}", other),
         };
+    }
+
+    #[test]
+    fn service_type_create_refuses_to_overwrite_existing_file() {
+        let file = assert_fs::NamedTempFile::new("new file").unwrap();
+        file.write_str("something").unwrap();
+        let service_type = ServiceType::ReverseProxy(Url::parse("http://url/").unwrap());
+        match service_type.create(&file.path().to_path_buf()) {
+            Ok(_) => panic!("overwriting file should have failed"),
+            Err(err) => assert!(err.to_string().contains("overwrite")),
+        }
     }
 }

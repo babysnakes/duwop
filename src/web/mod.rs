@@ -78,7 +78,6 @@ impl hyper::service::Service for MainService {
                 ServiceType::InvalidConfig(message) => {
                     MainFuture::ErrorResponse(Box::new(displayed_error(message.to_string())))
                 }
-                ServiceType::InvalidFile => MainFuture::ErrorResponse(Box::new(handle_404())),
             },
         }
     }
