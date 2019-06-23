@@ -26,3 +26,6 @@ dotenv = "0.14.0"
 structopt = { version = "0.2.16", features = ["wrap_help"] }
 dirs = "1.0.5"
 text_io = "0.1.7"
+
+[dev-dependencies]
+assert_fs = "0.11.3"

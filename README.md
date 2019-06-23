@@ -44,6 +44,8 @@ Currently we have (all should be considered beta at best):
 * Client app (`duwopctl`) that can perform the following tasks:
     * Reload configuration from disk.
     * Set log level in runtime.
+    * Create static file serving configuration
+    * Create reverse proxy configuration
 
 Setup instructions:
 
@@ -52,15 +54,10 @@ Setup instructions:
 * `mkdir -p $HOME/.duwop/logs`
 * `mkdir $HOME/.duwop/state`
 * Setup the state directory:
-    * Link any directories you want to web serve to the `state` directory
-      created above named by the hostname without the `.test.` domain - to serve
-      `/my/web/directory` as `myweb.test` run `ln -s /my/web/directory/
-      $HOME/.duwop/state/myweb`.
-    * Configure reverse proxy by creating a file named `<hostname>.proxy` with
-      the first line pointing to the required http address - to reverse proxy a
-      service running on localhost port 3000 as `http://myproxy.test/` create a
-      `$HOME/.duwop/state/myproxy.proxy` file with the first line containing
-      `http://localhost:3000/`. Other lines are ignored.
+    * Run `duwopctl help link` for instructions on adding configuration for
+      serving directories with static files.
+    * Run `duwopctl help proxy` for instructions of adding reverse proxy
+      configurations.
 * Copy `extra/org.babysnakes.duwop.plist` to `~/Library/LaunchAgents/` and edit:
     * Configure `/path/to/duwop`.
     * *Do not* change the `127.0.0.1` hostname. This is a _major_ security issue
@@ -81,14 +78,17 @@ Enjoy
 
 ### Development environment setup
 
-* Create `devstate` directory at the repository root and add to it a few links
-  to directories with html files and a few files that contains a url to proxy on
-  the first line - other lines are ignored - e.g. a `local3000.proxy` file with
-  `http://localhost:3000/` as the first line. The key (that is hostname) is the
-  name of the directory or the name of the file without the `.proxy` extension.
-  Other files will be ignored but you can add them as you wish.
-* Copy `extra/env-sample` to `.env` in the current directory and edit to your
+* Copy `extra/env-sample` to `.env` in the repository root and edit to your
   liking.
+* Create a `devdata` directory in the repository root - this will hold the
+  development state directory. Use the `duwopctl link` and `duwopctl proxy`
+  commands (described above in the setup instructions) to setup the development
+  state directory, _however_, use the undocumented `--state-dir` option (or
+  `DUWOP_APP_STATE_DIR` environment variable) to make sure your editing the
+  development state directory. If you have setup your `.env` file correctly
+  (previous bullet) and you are running from within the repository root you
+  don't have to do anything, the development `devdata` directory is enabbled
+  automatically.
 * Do not use `--log-to-file` option as the log directory is hard-coded.
 
 ### Contributors
