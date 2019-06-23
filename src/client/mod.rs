@@ -77,7 +77,7 @@ impl DuwopClient {
         link.push(&name);
         let web_dir =
             std::fs::canonicalize(source_dir).context("normalizing web directory path")?;
-        let st = ServiceType::StaticFiles(web_dir.as_os_str().to_owned());
+        let st = ServiceType::StaticFiles(web_dir.clone());
         st.create(&link)?;
         info!(
             "created static file service '{}' pointing to {:?}",

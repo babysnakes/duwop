@@ -10,7 +10,7 @@ use url::Url;
 
 #[derive(Debug, PartialEq)]
 pub enum ServiceType {
-    StaticFiles(OsString),
+    StaticFiles(PathBuf),
     ReverseProxy(Url),
     /// A file with problem - e.g. filename is not UTF-8 or url is not valid.
     InvalidConfig(String),
@@ -20,8 +20,7 @@ impl ServiceType {
     fn parse_config<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         if path.as_ref().is_dir() {
             debug!("found directory {:?}", path.as_ref());
-            std::fs::canonicalize(path)
-                .map(|path| Ok(ServiceType::StaticFiles(path.into_os_string())))?
+            std::fs::canonicalize(path).map(|path| Ok(ServiceType::StaticFiles(path)))?
         } else {
             debug!("parsing file {:?}", path.as_ref());
             let first_line = read_first_line_from_file(path)?;
@@ -171,7 +170,7 @@ mod tests {
         std::os::unix::fs::symlink(&source_path, &link_path).unwrap();
         assert_eq!(
             ServiceType::parse_config(link_path).unwrap(),
-            ServiceType::StaticFiles(source_path.into_os_string())
+            ServiceType::StaticFiles(source_path)
         );
         state_dir.close().unwrap();
     }
