@@ -67,6 +67,33 @@ impl ServiceType {
             )),
         }
     }
+
+    pub fn pprint(&self, name: &str) {
+        let wrapper = textwrap::Wrapper::with_termwidth()
+            .initial_indent("    -> ")
+            .subsequent_indent("       ");
+        match self {
+            ServiceType::StaticFiles(path) => {
+                let fallback_path = format!("{:?}", &path);
+                let path_str = path.to_str().unwrap_or(&fallback_path);
+                println!(
+                    "* {} [Static Files Directory]:\n{}",
+                    &name,
+                    wrapper.fill(path_str)
+                );
+            }
+            ServiceType::ReverseProxy(url) => {
+                println!(
+                    "* {} [Reverse Proxy]:\n{}",
+                    &name,
+                    wrapper.fill(url.as_str())
+                );
+            }
+            ServiceType::InvalidConfig(msg) => {
+                println!("* {} [*Config Error*]:\n{}", &name, wrapper.fill(msg));
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

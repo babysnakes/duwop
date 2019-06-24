@@ -93,6 +93,20 @@ enum CliSubCommand {
         /// specified
         url: Option<Url>,
     },
+
+    /// Deletes configuration (serve directory or reverse proxy)
+    ///
+    /// Use this command to delete the service by name (wether it's a directory
+    /// or reverse proxy). Run 'duwop list' to see available services.
+    #[structopt(name = "delete", author = "")]
+    Delete {
+        /// The name of the service to delete
+        name: String,
+    },
+
+    /// List available services.
+    #[structopt(name = "list", author = "")]
+    List,
 }
 
 fn main() {
@@ -117,6 +131,8 @@ fn run(app: Cli) -> Result<(), Error> {
             duwop_client.create_static_file_configuration(name, source)
         }
         CliSubCommand::Proxy { name, url } => duwop_client.create_proxy_configuration(name, url),
+        CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
+        CliSubCommand::List => duwop_client.print_services(),
     }
 }
 

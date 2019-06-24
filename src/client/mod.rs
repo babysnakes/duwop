@@ -1,7 +1,7 @@
 use super::cli_helpers::LogCommand;
 use super::management::client::Client as MgmtClient;
 use super::management::{LogLevel, Request, Response};
-use super::state::ServiceType;
+use super::state::{AppState, ServiceType};
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -102,5 +102,28 @@ impl DuwopClient {
         st.create(&proxy_file)?;
         info!("saved proxy file: {:?}", &proxy_file);
         self.reload_server_configuration()
+    }
+
+    pub fn delete_configuration(&self, name: String) -> Result<(), Error> {
+        let mut to_delete = self.state_dir.clone();
+        to_delete.push(&name);
+        std::fs::remove_file(&to_delete).context(format!(
+            "Deleting configuration '{}' (file: {:?}) failed! Are you sure it exists?",
+            &name, &to_delete
+        ))?;
+        info!("successfully deleted service '{}'", &name);
+        self.reload_server_configuration()
+    }
+
+    pub fn print_services(&self) -> Result<(), Error> {
+        let mut state = AppState::new(&self.state_dir);
+        state.load_services()?;
+        let mut keys: Vec<&String> = state.services.keys().collect();
+        keys.sort();
+        for k in keys {
+            let v = state.services.get(k).unwrap();
+            v.pprint(&k);
+        };
+        Ok(())
     }
 }
