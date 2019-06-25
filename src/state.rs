@@ -28,10 +28,13 @@ impl ServiceType {
             let mut parts = first_line.splitn(2, ':');
             match parts.next() {
                 Some("proxy") => Ok(ServiceType::parse_proxy(parts.next())),
-                Some(directive) => Ok(ServiceType::InvalidConfig(format!(
-                    "invalid directive: '{}'",
-                    directive
-                ))),
+                Some(directive) => {
+                    warn!("found invalid directive in config file: '{}'", directive);
+                    Ok(ServiceType::InvalidConfig(format!(
+                        "invalid directive: '{}'",
+                        directive
+                    )))
+                }
                 None => Ok(ServiceType::InvalidConfig("missing directive".to_string())),
             }
         }

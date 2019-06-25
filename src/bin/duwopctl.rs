@@ -2,12 +2,12 @@ use duwop::app_defaults::*;
 use duwop::cli_helpers::*;
 use duwop::client::*;
 
-use std::path::PathBuf;
-
 use dotenv;
 use failure::Error;
-use flexi_logger;
+use flexi_logger::{self, style, DeferredNow, LevelFilter, LogSpecBuilder, Logger, Record};
 use log::debug;
+use std::io;
+use std::path::PathBuf;
 use structopt::{self, StructOpt};
 use url::Url;
 
@@ -31,6 +31,14 @@ struct Cli {
         env = "DUWOP_APP_STATE_DIR"
     )]
     state_dir: Option<PathBuf>,
+
+    /// verbose logging (multiple times for extra verbosity)
+    #[structopt(name = "verbose", short = "v", global = true, parse(from_occurrences))]
+    verbose: u8,
+
+    /// only log warnings and errors
+    #[structopt(short = "q", global = true, conflicts_with = "verbose")]
+    quiet: bool,
 
     #[structopt(subcommand)]
     command: CliSubCommand,
@@ -111,8 +119,22 @@ enum CliSubCommand {
 
 fn main() {
     dotenv::dotenv().ok();
-    flexi_logger::Logger::with_env().start().unwrap();
     let app = Cli::from_args();
+    let mut builder = LogSpecBuilder::new();
+    if app.quiet {
+        builder.module("duwop", LevelFilter::Warn);
+    } else {
+        match app.verbose {
+            0 => builder.module("duwop", LevelFilter::Info),
+            1 => builder.module("duwop", LevelFilter::Debug),
+            2 => builder.module("duwop", LevelFilter::Trace),
+            _ => builder.default(LevelFilter::Trace),
+        };
+    }
+    Logger::with(builder.build())
+        .format_for_stderr(format_log)
+        .start()
+        .unwrap();
     match run(app) {
         Ok(_) => {}
         Err(err) => print_full_error(err),
@@ -134,6 +156,17 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
         CliSubCommand::List => duwop_client.print_services(),
     }
+}
+
+fn format_log(w: &mut io::Write, now: &mut DeferredNow, record: &Record) -> Result<(), io::Error> {
+    let level = record.level();
+    write!(
+        w,
+        "{}[{}] {}",
+        style(level, record.level()),
+        now.now().format("%H:%M:%S"),
+        &record.args(),
+    )
 }
 
 #[cfg(test)]
@@ -167,16 +200,22 @@ mod tests {
     test_cli_ok! { accept_custom_log_level, vec!["duwop", "log", "custom", "level"] }
     test_cli_ok! {
         accept_link_cmd_with_three_positional_args,
-        vec!["duwop", "link", "/some/path", "name"]
+        vec!["duwopctl", "link", "/some/path", "name"]
     }
     test_cli_ok! {
         accept_link_cmd_with_two_positional_args,
-        vec!["duwop", "link", "name"]
+        vec!["duwopctl", "link", "name"]
     }
 
     test_cli_error! {
         log_custom_requires_level,
-        vec!["duwop", "log", "custom"],
+        vec!["duwopctl", "log", "custom"],
         ErrorKind::MissingRequiredArgument
+    }
+
+    test_cli_error! {
+        verbosity_and_quiet_do_not_go_together,
+        vec!["duwopctl", "-v", "-q", "list"],
+        ErrorKind::ArgumentConflict
     }
 }
