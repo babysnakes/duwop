@@ -123,7 +123,7 @@ impl DuwopClient {
         for k in keys {
             let v = state.services.get(k).unwrap();
             v.pprint(&k);
-        };
+        }
         Ok(())
     }
 }

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use failure::{format_err, Error, ResultExt};
 use log::{debug, info, trace, warn};
 use url::Url;
+use yansi::Paint;
 
 #[derive(Debug, PartialEq)]
 pub enum ServiceType {
@@ -78,19 +79,23 @@ impl ServiceType {
                 let path_str = path.to_str().unwrap_or(&fallback_path);
                 println!(
                     "* {} [Static Files Directory]:\n{}",
-                    &name,
+                    Paint::green(&name),
                     wrapper.fill(path_str)
                 );
             }
             ServiceType::ReverseProxy(url) => {
                 println!(
                     "* {} [Reverse Proxy]:\n{}",
-                    &name,
+                    Paint::green(&name),
                     wrapper.fill(url.as_str())
                 );
             }
             ServiceType::InvalidConfig(msg) => {
-                println!("* {} [*Config Error*]:\n{}", &name, wrapper.fill(msg));
+                println!(
+                    "* {} [Config Error]:\n{}",
+                    Paint::red(&name),
+                    wrapper.fill(msg)
+                );
             }
         }
     }
