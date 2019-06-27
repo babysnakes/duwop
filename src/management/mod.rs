@@ -32,6 +32,9 @@ pub enum Request {
 
     /// Reset log level
     ResetLogLevel,
+
+    /// Query server for it's status, currently only indicates that it is running
+    ServerStatus,
 }
 
 /// Represents various log level commands.
@@ -98,6 +101,13 @@ impl Server {
                                     Response::Error(format!("error setting log level: {}", e))
                                 }
                             },
+                            Request::ServerStatus => match server.status() {
+                                Ok(_) => Response::Done,
+                                Err(e) => Response::Error(format!(
+                                    "error querying server for status: {}",
+                                    e
+                                )),
+                            },
                         }
                     });
                     let writes = responses.fold(writer, |writer, response| {
@@ -141,6 +151,11 @@ impl Server {
         handler.set_new_spec(spec);
         Ok(())
     }
+
+    fn status(&self) -> Result<(), Error> {
+        info!("received status request");
+        Ok(())
+    }
 }
 
 impl Request {
@@ -167,6 +182,7 @@ impl Request {
                 Some(cmd) => Err(format!("invalid log command: {}", cmd)),
                 None => Err("Log requires command".to_string()),
             },
+            Some("Status") => Ok(Request::ServerStatus),
             Some(cmd) => Err(format!("invalid command: {}", cmd)),
             None => Err("empty input".to_string()),
         }
@@ -181,6 +197,7 @@ impl Request {
                 LogLevel::CustomLevel(value) => format!("Log custom {}", value),
             },
             Request::ResetLogLevel => "Log reset".to_string(),
+            Request::ServerStatus => "Status".to_string(),
         }
     }
 }
@@ -257,6 +274,8 @@ mod tests {
         Request::SetLogLevel(LogLevel::CustomLevel("debug, duwop=trace".to_string()))
     }
 
+    request_parse_ok! { parse_service_status, "Status", Request::ServerStatus }
+
     request_parse_err! { parse_reload_with_with_argument, "Reload more", "arguments" }
     request_parse_err! { parse_invalid_log_level_command, "Log invalid", "invalid log command" }
     request_parse_err! { parse_log_without_command, "Log", "Log requires command" }
@@ -277,4 +296,5 @@ mod tests {
         Request::SetLogLevel(LogLevel::CustomLevel("info, duwop:trace".to_string())),
         "Log custom info, duwop:trace"
     }
+    request_serialize! { serialize_server_status, Request::ServerStatus, "Status" }
 }

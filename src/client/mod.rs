@@ -1,8 +1,11 @@
 use super::cli_helpers::LogCommand;
 use super::management::client::Client as MgmtClient;
 use super::management::{LogLevel, Request, Response};
-use super::state::ServiceType;
+use super::state::{AppState, ServiceConfigError, ServiceType};
 
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::fmt;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -10,22 +13,7 @@ use failure::{format_err, Error, ResultExt};
 use log::info;
 use text_io::{try_read, try_scan};
 use url::Url;
-
-fn process_client_response(result: Result<Response, Error>) -> Result<(), Error> {
-    match result {
-        Ok(resp) => {
-            let msg = resp.serialize();
-            match resp {
-                Response::Done => {
-                    info!("{}", msg);
-                    Ok(())
-                }
-                Response::Error(_) => Err(format_err!("Error from server: {}", msg)),
-            }
-        }
-        Err(err) => Err(err),
-    }
-}
+use yansi::Paint;
 
 pub struct DuwopClient {
     management_port: u16,
@@ -102,5 +90,161 @@ impl DuwopClient {
         st.create(&proxy_file)?;
         info!("saved proxy file: {:?}", &proxy_file);
         self.reload_server_configuration()
+    }
+
+    pub fn delete_configuration(&self, name: String) -> Result<(), Error> {
+        let mut to_delete = self.state_dir.clone();
+        to_delete.push(&name);
+        std::fs::remove_file(&to_delete).context(format!(
+            "Deleting configuration '{}' (file: {:?}) failed! Are you sure it exists?",
+            &name, &to_delete
+        ))?;
+        info!("successfully deleted service '{}'", &name);
+        self.reload_server_configuration()
+    }
+
+    pub fn print_services(&self) -> Result<(), Error> {
+        let mut state = AppState::new(&self.state_dir);
+        state.load_services()?;
+        let mut keys: Vec<&String> = state.services.keys().collect();
+        keys.sort();
+        for k in keys {
+            let v = state.services.get(k).unwrap();
+            v.pprint(&k);
+        }
+        Ok(())
+    }
+
+    pub fn doctor(&self) -> Result<(), Error> {
+        let mut status = Status::new();
+
+        info!("querying server status");
+        let client = MgmtClient::new(self.management_port);
+        if let Err(err) = process_client_response(client.run_client_command(Request::ServerStatus))
+        {
+            status.server_status = Some(err);
+        }
+
+        info!("querying database status");
+        let mut state = AppState::new(&self.state_dir);
+        state.load_services()?;
+        for (k, v) in &state.services {
+            if let ServiceType::InvalidConfig(msg) = v {
+                status.invalid_configurations.insert(k.clone(), msg.clone());
+            }
+        }
+        for e in state.errors() {
+            match e {
+                ServiceConfigError::NameError(path) => {
+                    status.name_errors.push(path.clone());
+                }
+                ServiceConfigError::IoError(msg) => {
+                    status.io_errors.push(msg.clone());
+                }
+            }
+        }
+        println!("{}", status);
+        Ok(())
+    }
+}
+
+/// Holds the result of all status queries.
+struct Status {
+    /// Contains the errors from querying the service via management interface.
+    server_status: Option<Error>,
+
+    /// Containing the various invalid configurations (service key -> error).
+    invalid_configurations: HashMap<String, String>,
+
+    /// Messages from io errors while reading database - i.e. invalid links, etc.
+    io_errors: Vec<String>,
+
+    /// A list of paths that could not be converted to strings - non-unicode.
+    name_errors: Vec<OsString>,
+}
+
+impl Status {
+    fn new() -> Self {
+        Status {
+            server_status: None,
+            invalid_configurations: HashMap::new(),
+            io_errors: vec![],
+            name_errors: vec![],
+        }
+    }
+
+    /// Indicates that the database has no errors
+    fn is_db_clean(&self) -> bool {
+        self.invalid_configurations.is_empty()
+            && self.io_errors.is_empty()
+            && self.name_errors.is_empty()
+    }
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let error_arrow = format!("    {} ", Paint::red("->"));
+        let wrapper = textwrap::Wrapper::with_termwidth()
+            .initial_indent(&error_arrow)
+            .subsequent_indent("       ");
+
+        match &self.server_status {
+            Some(err) => {
+                writeln!(f, "Server Status: {}", Paint::red("Error"))?;
+                writeln!(f, "{}", wrapper.fill(&err.to_string()))?;
+                for cause in err.iter_causes() {
+                    writeln!(f, "{}", wrapper.fill(&cause.to_string()))?;
+                }
+            }
+            None => {
+                writeln!(f, "Server Status: {}", Paint::green("Ok"))?;
+            }
+        }
+
+        if self.is_db_clean() {
+            writeln!(f, "Database Status: {}", Paint::green("OK"))?;
+        } else {
+            if !self.invalid_configurations.is_empty() {
+                writeln!(f, "Database Status: {}", Paint::red("ERROR"))?;
+                writeln!(f, "    The following services have configuration errors:")?;
+                for (service, err) in &self.invalid_configurations {
+                    let msg = format!("{}: {}", service, err);
+                    writeln!(f, "{}", wrapper.fill(&msg))?;
+                }
+            }
+            if !self.name_errors.is_empty() {
+                writeln!(f, "    The following paths have non UTF-8 characters:")?;
+                for path in &self.name_errors {
+                    let p = format!("{:?}", path);
+                    writeln!(f, "{}", wrapper.fill(&p))?;
+                }
+            }
+            if !self.io_errors.is_empty() {
+                writeln!(
+                    f,
+                    "    The following IO errors occurred while reading the database;"
+                )?;
+                for err in &self.io_errors {
+                    writeln!(f, "{}", &err)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn process_client_response(result: Result<Response, Error>) -> Result<(), Error> {
+    match result {
+        Ok(resp) => {
+            let msg = resp.serialize();
+            match resp {
+                Response::Done => {
+                    info!("{}", msg);
+                    Ok(())
+                }
+                Response::Error(_) => Err(format_err!("Error from server: {}", msg)),
+            }
+        }
+        Err(err) => Err(err),
     }
 }

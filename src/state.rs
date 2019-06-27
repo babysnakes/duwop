@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use failure::{format_err, Error, ResultExt};
 use log::{debug, info, trace, warn};
 use url::Url;
+use yansi::Paint;
 
 #[derive(Debug, PartialEq)]
 pub enum ServiceType {
@@ -27,10 +28,13 @@ impl ServiceType {
             let mut parts = first_line.splitn(2, ':');
             match parts.next() {
                 Some("proxy") => Ok(ServiceType::parse_proxy(parts.next())),
-                Some(directive) => Ok(ServiceType::InvalidConfig(format!(
-                    "invalid directive: '{}'",
-                    directive
-                ))),
+                Some(directive) => {
+                    warn!("found invalid directive in config file: '{}'", directive);
+                    Ok(ServiceType::InvalidConfig(format!(
+                        "invalid directive: '{}'",
+                        directive
+                    )))
+                }
                 None => Ok(ServiceType::InvalidConfig("missing directive".to_string())),
             }
         }
@@ -67,10 +71,41 @@ impl ServiceType {
             )),
         }
     }
+
+    pub fn pprint(&self, name: &str) {
+        let wrapper = textwrap::Wrapper::with_termwidth()
+            .initial_indent("    -> ")
+            .subsequent_indent("       ");
+        match self {
+            ServiceType::StaticFiles(path) => {
+                let fallback_path = format!("{:?}", &path);
+                let path_str = path.to_str().unwrap_or(&fallback_path);
+                println!(
+                    "* {} [Static Files Directory]:\n{}",
+                    Paint::green(&name),
+                    wrapper.fill(path_str)
+                );
+            }
+            ServiceType::ReverseProxy(url) => {
+                println!(
+                    "* {} [Reverse Proxy]:\n{}",
+                    Paint::green(&name),
+                    wrapper.fill(url.as_str())
+                );
+            }
+            ServiceType::InvalidConfig(msg) => {
+                println!(
+                    "* {} [Config Error]:\n{}",
+                    Paint::red(&name),
+                    wrapper.fill(msg)
+                );
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
-enum ServiceConfigError {
+pub enum ServiceConfigError {
     NameError(OsString),
     IoError(String),
 }
@@ -138,6 +173,10 @@ impl AppState {
         self.services = services;
         trace!("parsed state: {:#?}", &self);
         Ok(())
+    }
+
+    pub fn errors(&self) -> &Vec<ServiceConfigError> {
+        &self.errors
     }
 }
 
