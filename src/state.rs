@@ -105,7 +105,7 @@ impl ServiceType {
 }
 
 #[derive(Debug, PartialEq)]
-enum ServiceConfigError {
+pub enum ServiceConfigError {
     NameError(OsString),
     IoError(String),
 }
@@ -173,6 +173,10 @@ impl AppState {
         self.services = services;
         trace!("parsed state: {:#?}", &self);
         Ok(())
+    }
+
+    pub fn errors(&self) -> &Vec<ServiceConfigError> {
+        &self.errors
     }
 }
 

@@ -115,6 +115,10 @@ enum CliSubCommand {
     /// List available services.
     #[structopt(name = "list", author = "")]
     List,
+
+    /// Run diagnostics on service and database
+    #[structopt(name = "doctor", author = "")]
+    Doctor,
 }
 
 fn main() {
@@ -155,6 +159,7 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::Proxy { name, url } => duwop_client.create_proxy_configuration(name, url),
         CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
         CliSubCommand::List => duwop_client.print_services(),
+        CliSubCommand::Doctor => duwop_client.doctor(),
     }
 }
 
