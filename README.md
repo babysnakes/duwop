@@ -33,8 +33,8 @@ technical skills and knowledge in building rust projects.
 Currently we have (all should be considered beta at best):
 
 * DNS server that returns `127.0.0.1` on all `.test` domain requests.
-* Web server that listens on port 80 and can:
-    * Serve local files (directories are not supported - we only serve
+* Web server that listens on port 80 (with launchd) and can:
+    * Serve local files (directory listing is not supported - we only serve
       `index.html` files inside directories)
     * Proxy local ports - basic proxy - no support for advance features like
       websockets. Not tested much.
@@ -42,10 +42,13 @@ Currently we have (all should be considered beta at best):
   client.
 * Logs to rotating logs.
 * Client app (`duwopctl`) that can perform the following tasks:
-    * Reload configuration from disk.
-    * Set log level in runtime.
-    * Create static file serving configuration
-    * Create reverse proxy configuration
+    * Tell server to reload configuration from disk.
+    * Switch server log level in runtime.
+    * Create static file serving configuration.
+    * Create reverse proxy configuration.
+    * Delete configuration.
+    * List existing configurations.
+    * Check status of server (currently only if it runs) and database (check for errors).
 
 Setup instructions:
 
@@ -58,6 +61,7 @@ Setup instructions:
       serving directories with static files.
     * Run `duwopctl help proxy` for instructions of adding reverse proxy
       configurations.
+    * Use `dowopctl delete` / `duwopctl list` to delete / list configurations.
 * Copy `extra/org.babysnakes.duwop.plist` to `~/Library/LaunchAgents/` and edit:
     * Configure `/path/to/duwop`.
     * *Do not* change the `127.0.0.1` hostname. This is a _major_ security issue
@@ -81,14 +85,13 @@ Enjoy
 * Copy `extra/env-sample` to `.env` in the repository root and edit to your
   liking.
 * Create a `devdata` directory in the repository root - this will hold the
-  development state directory. Use the `duwopctl link` and `duwopctl proxy`
-  commands (described above in the setup instructions) to setup the development
-  state directory, _however_, use the undocumented `--state-dir` option (or
-  `DUWOP_APP_STATE_DIR` environment variable) to make sure your editing the
-  development state directory. If you have setup your `.env` file correctly
-  (previous bullet) and you are running from within the repository root you
-  don't have to do anything, the development `devdata` directory is enabbled
-  automatically.
+  development state directory. Use the various `duwopctl` commands (described
+  above in the setup instructions) to setup the development state directory,
+  _however_, use the undocumented `--state-dir` option (or `DUWOP_APP_STATE_DIR`
+  environment variable) to make sure your editing the development state
+  directory. If you have setup your `.env` file correctly (previous bullet) and
+  you are running from within the repository root you don't have to do anything,
+  the development `devdata` directory is enabbled automatically.
 * Do not use `--log-to-file` option as the log directory is hard-coded.
 
 ### Contributors
