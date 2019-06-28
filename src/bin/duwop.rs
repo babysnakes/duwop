@@ -57,7 +57,10 @@ fn main() {
         Ok(_) => {
             info!("Stopping...");
         }
-        Err(err) => print_full_error(err),
+        Err(err) => {
+            print_full_error(err);
+            std::process::exit(1);
+        }
     }
 }
 

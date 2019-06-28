@@ -141,7 +141,10 @@ fn main() {
         .unwrap();
     match run(app) {
         Ok(_) => {}
-        Err(err) => print_full_error(err),
+        Err(err) => {
+            print_full_error(err);
+            std::process::exit(1);
+        }
     }
 }
 
