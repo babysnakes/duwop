@@ -119,6 +119,21 @@ enum CliSubCommand {
     /// Run diagnostics on service and database
     #[structopt(name = "doctor", author = "")]
     Doctor,
+
+    /// Generate shell completions for the provided shell
+    ///
+    /// THe completion script outputs to stdout. Redirect it into a file for
+    /// saving.
+    #[structopt(name = "completion", author = "")]
+    Completion {
+        /// the shell to generate completion for
+        #[structopt(name = "shell", raw(possible_values = r#"&["bash", "zsh", "fish"]"#))]
+        shell: String,
+
+        /// the directory to save the completion script to
+        #[structopt(name = "target-dir", default_value = ".")]
+        target_dir: String,
+    },
 }
 
 fn main() {
@@ -163,6 +178,7 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
         CliSubCommand::List => duwop_client.print_services(),
         CliSubCommand::Doctor => duwop_client.doctor(),
+        CliSubCommand::Completion { shell, target_dir } => generate_completions(shell, target_dir),
     }
 }
 
@@ -175,6 +191,11 @@ fn format_log(w: &mut io::Write, now: &mut DeferredNow, record: &Record) -> Resu
         now.now().format("%H:%M:%S"),
         &record.args(),
     )
+}
+
+fn generate_completions(shell: String, target_dir: String) -> Result<(), Error> {
+    Cli::clap().gen_completions("duwopctl", shell.parse().unwrap(), &target_dir);
+    Ok(())
 }
 
 #[cfg(test)]

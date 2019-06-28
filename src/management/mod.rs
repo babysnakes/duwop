@@ -69,7 +69,12 @@ impl Server {
         log_handler: Arc<RwLock<ReconfigurationHandle>>,
         log_level: String,
     ) -> Self {
-        Server { port, state, log_handler, log_level }
+        Server {
+            port,
+            state,
+            log_handler,
+            log_level,
+        }
     }
 
     /// Returns a future to run the management server.

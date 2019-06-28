@@ -68,6 +68,8 @@ Setup instructions:
       as this project does not force authentication in any way! We rely on you
       listening only on ports unavailable from outside.
 * Load the launchd configuration with `launchctl load /path/to/plist/file`.
+* It's possible to generate shell completion script for the supported shells
+  (`zsh`, `bash` and `fish`). Run `duwopctl help completion` for instructions.
 
 Last thing to do is as root create `/etc/resolver` directory (if it doesn't
 exist) and create a `test` file with the following content:

@@ -108,7 +108,8 @@ fn run(app: Cli) -> Result<(), Error> {
         Arc::clone(&locked),
         Arc::clone(&locked_handler),
         log_level,
-    ).run();
+    )
+    .run();
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
