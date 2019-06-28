@@ -41,6 +41,10 @@ struct Cli {
     #[structopt(long = "state-dir", hidden = true, env = "DUWOP_APP_STATE_DIR")]
     state_dir: Option<PathBuf>,
 
+    // mostly for development. hidden.
+    #[structopt(long = "custom-log", hidden = true, env = "DUWOP_LOG_LEVEL")]
+    custom_log_level: Option<String>,
+
     /// Log to file instead of stderr, on by default when using as service (launchd)
     #[structopt(long = "log-to-file")]
     log_to_file: bool,
@@ -65,14 +69,15 @@ fn main() {
 }
 
 fn run(app: Cli) -> Result<(), Error> {
-    let mut logdir = match dirs::home_dir() {
-        Some(home) => home,
-        None => return Err(format_err!("could not extract home directory")),
-    };
-    logdir.push(LOG_DIR);
+    let log_level = app.custom_log_level.clone().unwrap_or(LOG_LEVEL.to_owned());
     // TODO: can we do it (enable log to file if launchd) automatically with clap?
     let log_handler = if app.log_to_file || app.launchd {
-        Logger::with_env_or_str(LOG_LEVEL)
+        let mut logdir = match dirs::home_dir() {
+            Some(home) => home,
+            None => return Err(format_err!("could not extract home directory")),
+        };
+        logdir.push(LOG_DIR);
+        Logger::with_str(&log_level)
             .log_to_file()
             .directory(logdir)
             .rotate(
@@ -83,7 +88,7 @@ fn run(app: Cli) -> Result<(), Error> {
             .start()
             .unwrap()
     } else {
-        Logger::with_env_or_str(LOG_LEVEL).start().unwrap()
+        Logger::with_str(&log_level).start().unwrap()
     };
     info!("Starting...");
     debug!("running with options: {:#?}", app);
@@ -98,11 +103,12 @@ fn run(app: Cli) -> Result<(), Error> {
         app.launchd,
         Arc::clone(&locked),
     );
-    let management_server = ManagementServer::run(
+    let management_server = ManagementServer::new(
         app.management_port.unwrap_or(MANAGEMENT_PORT),
         Arc::clone(&locked),
         Arc::clone(&locked_handler),
-    );
+        log_level,
+    ).run();
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);

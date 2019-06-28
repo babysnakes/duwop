@@ -4,7 +4,6 @@ use std::io::BufReader;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
-use super::app_defaults::*;
 use super::state::AppState;
 
 use failure::{format_err, Error};
@@ -17,8 +16,10 @@ use tokio::prelude::*;
 
 #[derive(Clone)]
 pub struct Server {
+    port: u16,
     state: Arc<RwLock<AppState>>,
     log_handler: Arc<RwLock<ReconfigurationHandle>>,
+    log_level: String,
 }
 
 /// Protocol request
@@ -59,14 +60,21 @@ pub enum Response {
 }
 
 impl Server {
-    /// New management server with provided mutable state
-    pub fn run(
+    /// New management server running on provided port and holding the provided
+    /// app state and log handler. *log_level* is the default application log
+    /// level (to use when resetting log level).
+    pub fn new(
         port: u16,
         state: Arc<RwLock<AppState>>,
         log_handler: Arc<RwLock<ReconfigurationHandle>>,
-    ) -> Box<impl Future<Item = (), Error = ()> + Send> {
-        let server = Server { state, log_handler };
-        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
+        log_level: String,
+    ) -> Self {
+        Server { port, state, log_handler, log_level }
+    }
+
+    /// Returns a future to run the management server.
+    pub fn run(self) -> Box<impl Future<Item = (), Error = ()> + Send> {
+        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, self.port).into();
         info!("listening for management requests on {}", &addr);
         let listener = TcpListener::bind(&addr).unwrap();
         Box::new(
@@ -76,7 +84,7 @@ impl Server {
                 .for_each(move |socket| {
                     let (reader, writer) = socket.split();
                     let lines = lines(BufReader::new(reader));
-                    let mut server = server.clone();
+                    let mut server = self.clone();
                     let responses = lines.map(move |line| {
                         let request = match Request::parse(&line) {
                             Ok(req) => req,
@@ -144,10 +152,10 @@ impl Server {
     }
 
     fn reset_log_level(&mut self) -> Result<(), Error> {
-        info!("resetting log level");
+        info!("resetting log level to: {}", &self.log_level);
         let locked = Arc::clone(&self.log_handler);
         let mut handler = locked.write().unwrap();
-        let spec = LogSpecification::env_or_parse(LOG_LEVEL)?;
+        let spec = LogSpecification::parse(&self.log_level)?;
         handler.set_new_spec(spec);
         Ok(())
     }

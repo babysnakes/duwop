@@ -6,5 +6,6 @@ DUWOP_MANAGEMENT_PORT=9254
 # developer data directory
 DUWOP_APP_STATE_DIR=/path/to/repository/root/devdata/
 
-# env_logger
-RUST_LOG="duwop=trace,tokio=warn"
+# (Undocumented) custom log level. Affects only server (duwop). Comment out to
+# run on default level during development.
+DUWOP_LOG_LEVEL="duwop=trace,tokio=warn"
