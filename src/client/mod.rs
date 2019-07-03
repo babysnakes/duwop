@@ -143,6 +143,7 @@ impl DuwopClient {
                 }
             }
         }
+        // TODO: check resolver
         println!("{}", status);
         Ok(())
     }

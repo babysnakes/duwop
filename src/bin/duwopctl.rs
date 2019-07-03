@@ -1,6 +1,7 @@
 use duwop::app_defaults::*;
 use duwop::cli_helpers::*;
 use duwop::client::*;
+use duwop::setup;
 
 use dotenv;
 use failure::Error;
@@ -134,6 +135,20 @@ enum CliSubCommand {
         #[structopt(name = "target-dir", default_value = ".")]
         target_dir: String,
     },
+
+    /// Setup duwop (for new installations or upgrades)
+    ///
+    /// Creates required directories, config files, agent configuration, etc.
+    /// Should not modify existing files/configs except for agent configuration.
+    /// If you want to run it safely without overwriting or restarting the agent
+    /// use the --skip-agent option.
+    #[structopt(name = "setup", author = "")]
+    Setup {
+        /// skip agent configuration (e.g. if you only want to create missing
+        /// resolver file)
+        #[structopt(long = "skip-agent")]
+        skip_agent: bool,
+    }
 }
 
 fn main() {
@@ -179,6 +194,7 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::List => duwop_client.print_services(),
         CliSubCommand::Doctor => duwop_client.doctor(),
         CliSubCommand::Completion { shell, target_dir } => generate_completions(shell, target_dir),
+        CliSubCommand::Setup { skip_agent } => setup::run(skip_agent),
     }
 }
 
