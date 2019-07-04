@@ -148,7 +148,7 @@ enum CliSubCommand {
         /// resolver file)
         #[structopt(long = "skip-agent")]
         skip_agent: bool,
-    }
+    },
 }
 
 fn main() {

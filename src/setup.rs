@@ -22,10 +22,22 @@ pub fn run(skip_agent: bool) -> Result<(), Error> {
         .subsequent_indent("  ");
     println!("\n{}", Paint::green("================================"));
     println!("\nSetup has completed successfully\n");
-    println!("{}", wrapper.fill("use 'duwopctl completion ...' to generate shell completion"));
-    println!("{}", wrapper.fill("use 'duwopctl link | proxy ...' to add services"));
-    println!("{}", wrapper.fill("run 'duwopctl doctor' to check service, setup and db health"));
-    println!("{}", wrapper.fill("run 'duwopctl help' for available commands"));
+    println!(
+        "{}",
+        wrapper.fill("use 'duwopctl completion ...' to generate shell completion")
+    );
+    println!(
+        "{}",
+        wrapper.fill("use 'duwopctl link | proxy ...' to add services")
+    );
+    println!(
+        "{}",
+        wrapper.fill("run 'duwopctl doctor' to check service, setup and db health")
+    );
+    println!(
+        "{}",
+        wrapper.fill("run 'duwopctl help' for available commands")
+    );
     println!("\nEnjoy :)");
     Ok(())
 }
