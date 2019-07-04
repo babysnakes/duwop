@@ -148,9 +148,16 @@ impl DuwopClient {
 
         info!("Querying DNS resolving");
         match lookup_host("abcd.test") {
-            Ok(results) => if !results.contains(&IpAddr::V4(Ipv4Addr::LOCALHOST)) {
-                    let msg = format!("expected results to contain 127.0.0.1, found: {:?}", results);
+            Ok(results) => {
+                if results.contains(&IpAddr::V4(Ipv4Addr::LOCALHOST)) {
+                    status.dns_resolving = None;
+                } else {
+                    let msg = format!(
+                        "expected results to contain 127.0.0.1, found: {:?}",
+                        results
+                    );
                     status.dns_resolving = Some(msg);
+                }
             }
             Err(err) => {
                 let msg = format!("error resolving: {}", err);
@@ -188,7 +195,7 @@ impl Status {
             invalid_configurations: HashMap::new(),
             io_errors: vec![],
             name_errors: vec![],
-            dns_resolving: None,
+            dns_resolving: Some("Not Yet Tested".to_string()),
         }
     }
 
