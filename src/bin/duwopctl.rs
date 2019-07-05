@@ -148,6 +148,10 @@ enum CliSubCommand {
         /// resolver file)
         #[structopt(long = "skip-agent")]
         skip_agent: bool,
+
+        /// don't actually perform the setup, just print what will be done
+        #[structopt(long = "dry-run")]
+        dry_run: bool,
     },
 }
 
@@ -194,7 +198,10 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::List => duwop_client.print_services(),
         CliSubCommand::Doctor => duwop_client.doctor(),
         CliSubCommand::Completion { shell, target_dir } => generate_completions(shell, target_dir),
-        CliSubCommand::Setup { skip_agent } => setup::run(skip_agent),
+        CliSubCommand::Setup {
+            skip_agent,
+            dry_run,
+        } => setup::Setup::new(dry_run).run(skip_agent),
     }
 }
 
