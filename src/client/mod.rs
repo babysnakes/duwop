@@ -165,7 +165,7 @@ impl DuwopClient {
             }
         }
 
-        println!("{}", status);
+        println!("\n{}", status);
         Ok(())
     }
 }

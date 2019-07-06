@@ -217,15 +217,9 @@ fn run(app: Cli) -> Result<(), Error> {
     }
 }
 
-fn format_log(w: &mut io::Write, now: &mut DeferredNow, record: &Record) -> Result<(), io::Error> {
+fn format_log(w: &mut io::Write, _now: &mut DeferredNow, record: &Record) -> Result<(), io::Error> {
     let level = record.level();
-    write!(
-        w,
-        "{}[{}] {}",
-        style(level, record.level()),
-        now.now().format("%H:%M:%S"),
-        &record.args(),
-    )
+    write!(w, "{}: {}", style(level, record.level()), &record.args(),)
 }
 
 fn generate_completions(shell: String, target_dir: String) -> Result<(), Error> {
