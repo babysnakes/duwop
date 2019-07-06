@@ -153,6 +153,17 @@ enum CliSubCommand {
         #[structopt(long = "dry-run")]
         dry_run: bool,
     },
+
+    /// Remove system wide configurations (installed during setup).
+    ///
+    /// This will not remove logs and state directory as it is contained in it's
+    /// own directory.
+    #[structopt(name = "remove", author = "")]
+    Remove {
+        /// don't actually remove anything, just print what will be done
+        #[structopt(long = "dry-run")]
+        dry_run: bool,
+    },
 }
 
 fn main() {
@@ -202,6 +213,7 @@ fn run(app: Cli) -> Result<(), Error> {
             skip_agent,
             dry_run,
         } => setup::Setup::new(dry_run).run(skip_agent),
+        CliSubCommand::Remove { dry_run } => setup::Setup::new(dry_run).remove(),
     }
 }
 

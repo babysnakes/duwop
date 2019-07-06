@@ -6,7 +6,7 @@ use std::process::Command;
 
 use dirs;
 use failure::{format_err, Error, ResultExt};
-use log::{debug, info};
+use log::debug;
 use yansi::Paint;
 
 type SetupResult = Result<(), Error>;
@@ -19,6 +19,12 @@ pub struct Setup {
     agent_file: PathBuf,
     resolver_directory: String,
     resolver_file: String,
+}
+
+enum IoOperation {
+    MkdirAll(PathBuf),
+    RemoveFile(PathBuf),
+    WriteAllFile(PathBuf, String),
 }
 
 impl Setup {
@@ -41,14 +47,14 @@ impl Setup {
             launchd_agents_dir,
             agent_file,
             resolver_directory: RESOLVER_DIR.to_owned(),
-            resolver_file: format!("{}/{}", &RESOLVER_DIR, RESOLVER_FILE),
+            resolver_file: format!("{}{}", &RESOLVER_DIR, RESOLVER_FILE),
         }
     }
 
     pub fn run(&self, skip_agent: bool) -> SetupResult {
         &self.create_duwop_dirs()?;
         if skip_agent {
-            info!("skipping agent setup");
+            info("skipping agent setup");
         } else {
             self.install_gent()?;
         }
@@ -80,20 +86,32 @@ impl Setup {
         Ok(())
     }
 
+    pub fn remove(&self) -> SetupResult {
+        info("Removing duwop configurations");
+        &self.remove_agent()?;
+        &self.remove_resolver_file()?;
+
+        println!("\n{}", Paint::green("======================"));
+        println!("\nConfigurations removed\n");
+        // TODO: print uninstall help once available.
+        Ok(())
+    }
+
     fn create_duwop_dirs(&self) -> SetupResult {
-        if self.dry_run {
-            info!("would create {:?}", self.state_dir.as_os_str());
-            info!("would create {:?}", self.log_dir.as_os_str());
-        } else {
-            info!("creating required directories");
-            std::fs::create_dir_all(&self.state_dir).context("creating state directory")?;
-            std::fs::create_dir_all(&self.log_dir).context("creating logs directory")?;
-        }
+        info("creating required directories under $HOME/.duwop");
+        let create_state_dir = IoOperation::MkdirAll(self.state_dir.to_owned());
+        let create_log_dir = IoOperation::MkdirAll(self.log_dir.to_owned());
+        create_state_dir
+            .perform(self.dry_run)
+            .context("creating state directory")?;
+        create_log_dir
+            .perform(self.dry_run)
+            .context("creating log directory")?;
         Ok(())
     }
 
     fn install_gent(&self) -> SetupResult {
-        info!("installing launchd agent");
+        info("installing launchd agent");
         let duwop_exe = find_duwop_exe()?;
         let launchd_text = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -125,22 +143,19 @@ impl Setup {
             path=duwop_exe,
         );
         let agent_file = &self.agent_file.to_str().unwrap();
-        if self.dry_run {
-            info!("would create directory: {:?}", self.launchd_agents_dir);
-        } else {
-            std::fs::create_dir_all(&self.launchd_agents_dir)?;
-        }
+        let create_agents_dir = IoOperation::MkdirAll(self.launchd_agents_dir.to_owned());
+        create_agents_dir
+            .perform(self.dry_run)
+            .context("creating launchd agents directory")?;
         if self.agent_file.exists() {
-            info!("launchd file exists, will unload and overwrite");
+            info("launchd file exists, will unload and overwrite");
             // we can safely ignore this command
             let _ = run_command(vec!["launchctl", "unload", agent_file], "", self.dry_run);
         }
-        if self.dry_run {
-            info!("would create {}", agent_file);
-        } else {
-            let mut f = std::fs::File::create(&self.agent_file)?;
-            f.write_all(launchd_text.as_bytes())?;
-        }
+        let create_agent_file = IoOperation::WriteAllFile(self.agent_file.clone(), launchd_text);
+        create_agent_file
+            .perform(self.dry_run)
+            .context("creating launchd agent file")?;
         run_command(
             vec!["launchctl", "load", agent_file],
             "failed loading agent",
@@ -149,13 +164,13 @@ impl Setup {
     }
 
     fn install_resolve_file(&self) -> SetupResult {
-        info!("setting up resolver");
+        info("setting up resolver");
         let resolver_file = Path::new(&self.resolver_file);
         if resolver_file.exists() {
-            info!(
+            info(&format!(
                 "resolver file ({}) already exists (possibly from previous version?). skipping.",
                 &self.resolver_file
-            );
+            ));
             return Ok(());
         }
         let content = format!(
@@ -163,11 +178,11 @@ impl Setup {
             &DNS_PORT
         );
         debug!("creating resolver file");
-        println!(
+        tell(&format!(
             "{} you might be prompted for your (sudo) password for creating {}",
-            Paint::green("Note:"),
+            Paint::new("Note:").bold(),
             &self.resolver_file,
-        );
+        ));
         run_command(
             vec!["sudo", "mkdir", "-p", &self.resolver_directory],
             "error creating resolver directory",
@@ -191,6 +206,81 @@ impl Setup {
         )?;
         Ok(())
     }
+
+    fn remove_agent(&self) -> SetupResult {
+        let agent_file = &self.agent_file.to_str().unwrap();
+        info("removing duwop agent configuration");
+        if self.dry_run {
+            tell(&format!(
+                "{} you will see the 'unload' command running twice, that's intentional",
+                Paint::new("Note:").bold()
+            ));
+        }
+        // We are running twice so in debug mode we'll see at least one output
+        // about agent that is not loaded.
+        for _ in [1, 2].iter() {
+            // we can let it fail
+            let _ = run_command(
+                vec!["launchctl", "unload", agent_file],
+                "error unloading duwop service",
+                self.dry_run,
+            );
+        }
+        let remove_file = IoOperation::RemoveFile(self.agent_file.clone());
+        remove_file
+            .perform(self.dry_run)
+            .context("deleting agent file")?;
+        Ok(())
+    }
+
+    fn remove_resolver_file(&self) -> SetupResult {
+        info("removing resolver file");
+        tell(&format!(
+            "{} you might be prompted for your (sudo) password for deleting {}",
+            Paint::new("Note:").bold(),
+            &self.resolver_file,
+        ));
+        run_command(
+            vec!["sudo", "rm", &self.resolver_file],
+            "error deleting resolver file",
+            self.dry_run,
+        )
+    }
+}
+
+impl IoOperation {
+    fn perform(&self, dry_run: bool) -> Result<(), std::io::Error> {
+        match self {
+            IoOperation::RemoveFile(file) => {
+                if dry_run {
+                    tell(&format!("Would delete {:?}", &file));
+                    Ok(())
+                } else {
+                    debug!("deleting file {:?}", &file);
+                    std::fs::remove_file(&file)
+                }
+            }
+            IoOperation::MkdirAll(dir) => {
+                if dry_run {
+                    tell(&format!("would create directory {:?}", dir));
+                    Ok(())
+                } else {
+                    debug!("creating directory {:?}", &dir);
+                    std::fs::create_dir_all(&dir)
+                }
+            }
+            IoOperation::WriteAllFile(file, content) => {
+                if dry_run {
+                    tell(&format!("would create file: {:?}", &file));
+                    Ok(())
+                } else {
+                    debug!("creating file: {:?}", &file);
+                    let mut f = std::fs::File::create(&file)?;
+                    f.write_all(content.as_bytes())
+                }
+            }
+        }
+    }
 }
 
 /// A helper for running shell commands. It handles debug logging, dry run and
@@ -208,7 +298,7 @@ fn run_command(cmd: Vec<&str>, error_msg: &str, dry_run: bool) -> SetupResult {
     let mut command = Command::new(cmd.first().unwrap());
     command.args(&cmd[1..]);
     if dry_run {
-        info!("would run: {:#?}", &command);
+        tell(&format!("would run: {:#?}", &command));
         Ok(())
     } else {
         debug!("running: {:#?}", &command);
@@ -249,6 +339,22 @@ fn find_duwop_exe() -> Result<String, Error> {
     }
 }
 
+fn info(text: &str) {
+    print(Paint::green("->"), text);
+}
+
+fn tell(text: &str) {
+    print(Paint::yellow("->"), text);
+}
+
+fn print(arrow: Paint<&str>, text: &str) {
+    let initial = format!("{} ", arrow);
+    let wrapper = textwrap::Wrapper::with_termwidth()
+        .initial_indent(&initial)
+        .subsequent_indent("   ");
+    println!("{}", wrapper.fill(text));
+}
+
 #[test]
 fn run_command_errors_if_command_is_empty() {
     let result = run_command(vec![], "message", true);
@@ -261,7 +367,7 @@ fn run_command_errors_if_command_is_empty() {
 
 #[test]
 fn run_command_does_not_run_the_command_in_dry_run_mode() {
-    // in dry run mode this should not return error becaues it doesn't try to
+    // in dry run mode this should not return error because it doesn't try to
     // run the invalid command.
     let result = run_command(vec!["/no/such/command"], "error", true);
     assert!(result.is_ok());
