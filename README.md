@@ -55,8 +55,10 @@ Enjoy
 * Reverse proxy:
   * Only basic reverse proxy is supported. No support for streams, upgrades etc
     (high priority).
-* Docker serving is not yet implemented. It's possible to implement it manually
-  in terms of reverse proxy.
+* Completely missing features:
+    * Docker serving is not yet implemented. It's possible to implement it
+      manually in terms of reverse proxy.
+    * SSL support not implemented yet.
 
 ### Development environment setup
 
