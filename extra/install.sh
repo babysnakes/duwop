@@ -4,6 +4,7 @@
 # the same folder as `duwop` and `duwopctl`.
 
 BOLD='\033[1m'
+GREEN='\033[32m'
 NC='\033[0m' # No Color
 
 source_dir=`dirname $0`
@@ -26,3 +27,6 @@ else
   echo -e "${BOLD}Note:${NC} you might be prompted for your (sudo) password"
   sudo ln -s ${target_dir}/duwopctl $directory/
 fi
+
+echo -e "${GREEN}->${NC} Installation is complete :)"
+echo -e "${GREEN}->${NC} Please run '${directory}/duwopctl help setup' for setup instructions"

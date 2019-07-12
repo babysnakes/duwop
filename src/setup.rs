@@ -93,7 +93,7 @@ impl Setup {
 
         println!("\n{}", Paint::green("======================"));
         println!("\nConfigurations removed\n");
-        // TODO: print uninstall help once available.
+        // TODO: print uninstall instruction.
         Ok(())
     }
 
