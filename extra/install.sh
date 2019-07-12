@@ -22,9 +22,15 @@ read -p "[$default_path_dir]: " directory
 [[ -z "$directory" ]] && directory=${default_path_dir}
 
 if [[ -w $directory ]]; then
+  if [[ -L ${directory}/duwopctl ]]; then
+    unlink ${directory}/duwopctl
+  fi
   ln -s ${target_dir}/duwopctl $directory/
 else
   echo -e "${BOLD}Note:${NC} you might be prompted for your (sudo) password"
+  if [[ -L ${directory}/duwopctl ]]; then
+    sudo unlink ${directory}/duwopctl
+  fi
   sudo ln -s ${target_dir}/duwopctl $directory/
 fi
 
