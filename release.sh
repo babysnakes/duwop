@@ -21,7 +21,7 @@ function archive() {
   if [[ -z "$match" ]]; then
     match=$(git describe --exact-match)
   fi
-  tar czf target/duwop-bin-${match}.tar.gz -C target/ duwop
+  tar czf target/duwop-bin-darwin-${match}.tar.gz -C target/ duwop
 }
 
 case "$1" in

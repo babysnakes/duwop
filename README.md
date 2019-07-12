@@ -21,7 +21,7 @@ To control the service you have a command-line utility (`duwopctl`). It helps
 adding/removing services, configure the system or remove configurations, service
 diagnostics and more.
 
-See [whats missing](#Whats-missing) for project status.
+Check [here](#Project-status) for project status.
 
 ### Setup Instructions
 
@@ -45,7 +45,9 @@ report setup bugs.
 
 Enjoy
 
-### Whats missing
+### Project status
+
+>Note that even the implemented features are of beta quality, Please report bugs.
 
 * Serving directories:
   * Directory listing are not supported. If no `index.html` file in the
