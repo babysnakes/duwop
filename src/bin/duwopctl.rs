@@ -13,7 +13,7 @@ use structopt::{self, StructOpt};
 use url::Url;
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "duwopctl", author = "", raw(version = "VERSION"))]
+#[structopt(name = "duwopctl", author = "")]
 /// Configure/Manage duwop service.
 struct Cli {
     /// alternative management port
