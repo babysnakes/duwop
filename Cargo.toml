@@ -1,6 +1,6 @@
 [package]
 name = "duwop"
-version = "0.1.0"
+version = "0.2.0-beta1"
 authors = ["Haim Ashkenazi <haim@babysnakes.org>"]
 edition = "2018"
 license = "MIT"
@@ -20,6 +20,7 @@ url = "1.7.2"
 
 failure = "0.1.5"
 failure_derive = "0.1.5"
+dns-lookup = "1.0.1"
 log = "0.4.6"
 flexi_logger = "0.13.2"
 textwrap = "0.11.0"

@@ -7,8 +7,10 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 
+use dns_lookup::lookup_host;
 use failure::{format_err, Error, ResultExt};
 use log::info;
 use text_io::{try_read, try_scan};
@@ -143,7 +145,27 @@ impl DuwopClient {
                 }
             }
         }
-        println!("{}", status);
+
+        info!("Querying DNS resolving");
+        match lookup_host("abcd.test") {
+            Ok(results) => {
+                if results.contains(&IpAddr::V4(Ipv4Addr::LOCALHOST)) {
+                    status.dns_resolving = None;
+                } else {
+                    let msg = format!(
+                        "expected results to contain 127.0.0.1, found: {:?}",
+                        results
+                    );
+                    status.dns_resolving = Some(msg);
+                }
+            }
+            Err(err) => {
+                let msg = format!("error resolving: {}", err);
+                status.dns_resolving = Some(msg);
+            }
+        }
+
+        println!("\n{}", status);
         Ok(())
     }
 }
@@ -161,6 +183,9 @@ struct Status {
 
     /// A list of paths that could not be converted to strings - non-unicode.
     name_errors: Vec<OsString>,
+
+    /// String indicates DNS resolving error
+    dns_resolving: Option<String>,
 }
 
 impl Status {
@@ -170,6 +195,7 @@ impl Status {
             invalid_configurations: HashMap::new(),
             io_errors: vec![],
             name_errors: vec![],
+            dns_resolving: Some("Not Yet Tested".to_string()),
         }
     }
 
@@ -198,6 +224,16 @@ impl fmt::Display for Status {
             }
             None => {
                 writeln!(f, "Server Status: {}", Paint::green("Ok"))?;
+            }
+        }
+
+        match &self.dns_resolving {
+            Some(err) => {
+                writeln!(f, "DNS Resolving: {}", Paint::red("Error"))?;
+                writeln!(f, "{}", wrapper.fill(err))?;
+            }
+            None => {
+                writeln!(f, "DNS Resolving: {}", Paint::green("Ok"))?;
             }
         }
 
