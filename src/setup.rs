@@ -52,7 +52,7 @@ impl Setup {
     }
 
     pub fn run(&self, skip_agent: bool) -> SetupResult {
-        &self.create_duwop_dirs()?;
+        self.create_duwop_dirs()?;
         if skip_agent {
             info("skipping agent setup");
         } else {
@@ -88,8 +88,8 @@ impl Setup {
 
     pub fn remove(&self) -> SetupResult {
         info("Removing duwop configurations");
-        &self.remove_agent()?;
-        &self.remove_resolver_file()?;
+        self.remove_agent()?;
+        self.remove_resolver_file()?;
 
         println!("\n{}", Paint::green("======================"));
         println!("\nConfigurations removed\n");
