@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{read_dir, File};
 use std::io::{BufRead, BufReader};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use failure::{format_err, Error, ResultExt};
 use log::{debug, info, trace, warn};
-use url::Url;
 use yansi::Paint;
 
 #[derive(Debug, PartialEq)]
 pub enum ServiceType {
     StaticFiles(PathBuf),
-    ReverseProxy(Url),
-    /// A file with problem - e.g. filename is not UTF-8 or url is not valid.
+    ReverseProxy(SocketAddr),
+    /// A file with problem - e.g. filename is not UTF-8 or socket address is not valid.
     InvalidConfig(String),
 }
 
@@ -40,16 +41,23 @@ impl ServiceType {
         }
     }
 
-    fn parse_proxy(url_option: Option<&str>) -> Self {
-        match url_option {
-            Some(url_str) => match Url::parse(url_str) {
-                Ok(url) => ServiceType::ReverseProxy(url),
+    /// Parses the optionally supplied socket address, but returns address
+    /// containing localhost and the port extracted for the address. This might
+    /// change in the future (hence the use of full SocketAddr instead of just
+    /// port).
+    fn parse_proxy(addr_option: Option<&str>) -> Self {
+        match addr_option {
+            Some(addr_str) => match SocketAddr::from_str(addr_str) {
+                Ok(addr) => ServiceType::ReverseProxy((Ipv4Addr::LOCALHOST, addr.port()).into()),
                 Err(err) => {
-                    warn!("error parsing url ({}): {}", url_str, err);
-                    ServiceType::InvalidConfig(format!("not a valid URL: {}", url_str))
+                    warn!("error parsing address ({}): {}", addr_str, err);
+                    ServiceType::InvalidConfig(format!(
+                        "not a valid <host:port> address: {}",
+                        addr_str
+                    ))
                 }
             },
-            None => ServiceType::InvalidConfig("missing URL".to_string()),
+            None => ServiceType::InvalidConfig("missing socket address".to_string()),
         }
     }
 
@@ -61,9 +69,15 @@ impl ServiceType {
             ServiceType::StaticFiles(source) => std::os::unix::fs::symlink(source, path)
                 .context("linking web directory")
                 .map_err(Error::from),
-            ServiceType::ReverseProxy(url) => {
-                std::fs::write(&path, format!("proxy:{}", url.as_str()))
-                    .context(format!("writing url to {:?}", &path))?;
+            ServiceType::ReverseProxy(addr) => {
+                std::fs::write(
+                    &path,
+                    format!(
+                        "proxy:{}\n# Note: the IP is currently ignored, only port is used.",
+                        addr.to_string()
+                    ),
+                )
+                .context(format!("writing socket address to {:?}", &path))?;
                 Ok(())
             }
             ServiceType::InvalidConfig(_) => Err(format_err!(
@@ -86,11 +100,11 @@ impl ServiceType {
                     wrapper.fill(path_str)
                 );
             }
-            ServiceType::ReverseProxy(url) => {
+            ServiceType::ReverseProxy(addr) => {
                 println!(
                     "* {} [Reverse Proxy]:\n{}",
                     Paint::green(&name),
-                    wrapper.fill(url.as_str())
+                    wrapper.fill(&format!("http://{}", addr.to_string()))
                 );
             }
             ServiceType::InvalidConfig(msg) => {
@@ -217,32 +231,39 @@ mod tests {
     #[test]
     fn parse_config_reads_proxy_files_correctly() {
         let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
-        file.write_str("proxy:http://url/").unwrap();
+        let addr_str = "127.0.0.1:8080";
+        file.write_str(&format!("proxy:{}", addr_str)).unwrap();
         assert_eq!(
             ServiceType::parse_config(file.path()).unwrap(),
-            ServiceType::ReverseProxy(Url::parse("http://url/").unwrap())
+            ServiceType::ReverseProxy(SocketAddr::from_str(addr_str).unwrap())
         );
     }
 
     #[test]
-    fn parse_config_returns_invalid_config_if_proxy_with_invalid_url() {
+    fn parse_config_returns_invalid_config_if_proxy_with_invalid_socket_addr() {
         let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
         file.write_str("proxy:localhost").unwrap();
         match ServiceType::parse_config(file.path()) {
             Ok(ServiceType::InvalidConfig(e)) => {
-                assert!(e.contains("not a valid URL"), "wrong InvalidConfig message");
+                assert!(
+                    e.contains("not a valid <host:port>"),
+                    "wrong InvalidConfig message"
+                );
             }
             other => panic!("bad response ({:?}) from parse_config", other),
         };
     }
 
     #[test]
-    fn parse_config_returns_invalid_config_if_proxy_with_no_url() {
+    fn parse_config_returns_invalid_config_if_proxy_with_no_socket_addr() {
         let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
         file.write_str("proxy").unwrap();
         match ServiceType::parse_config(file.path()) {
             Ok(ServiceType::InvalidConfig(e)) => {
-                assert!(e.contains("missing URL"), "wrong InvalidConfig message");
+                assert!(
+                    e.contains("missing socket address"),
+                    "wrong InvalidConfig message"
+                );
             }
             other => panic!("returned bad response: {:?}", other),
         };
@@ -267,10 +288,22 @@ mod tests {
     fn service_type_create_refuses_to_overwrite_existing_file() {
         let file = assert_fs::NamedTempFile::new("new file").unwrap();
         file.write_str("something").unwrap();
-        let service_type = ServiceType::ReverseProxy(Url::parse("http://url/").unwrap());
+        let service_type = ServiceType::ReverseProxy(([127, 0, 0, 1], 1000).into());
         match service_type.create(&file.path().to_path_buf()) {
             Ok(_) => panic!("overwriting file should have failed"),
             Err(err) => assert!(err.to_string().contains("overwrite")),
         }
+    }
+
+    #[test]
+    fn parse_config_ignores_proxy_host_and_always_refers_to_localhost() {
+        let file = assert_fs::NamedTempFile::new("proxyfile").unwrap();
+        file.write_str("proxy:10.0.0.1:9999").unwrap();
+        match ServiceType::parse_config(file.path()) {
+            Ok(ServiceType::ReverseProxy(addr)) => {
+                assert_eq!(addr, ([127, 0, 0, 1], 9999).into());
+            }
+            other => panic!("returned bad response: {:?}", other),
+        };
     }
 }

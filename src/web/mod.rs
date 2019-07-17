@@ -136,9 +136,13 @@ impl hyper::service::Service for MainService {
                 ServiceType::StaticFiles(path) => {
                     MainFuture::Static(Box::new(static_files::serve(req, &PathBuf::from(path))))
                 }
-                ServiceType::ReverseProxy(url) => MainFuture::ReverseProxy(
-                    hyper_reverse_proxy::call(self.remote_addr.ip(), &url.as_str(), req),
-                ),
+                ServiceType::ReverseProxy(addr) => {
+                    MainFuture::ReverseProxy(hyper_reverse_proxy::call(
+                        self.remote_addr.ip(),
+                        &format!("http://{}", addr.to_string()),
+                        req,
+                    ))
+                }
                 ServiceType::InvalidConfig(message) => {
                     MainFuture::ErrorResponse(Box::new(displayed_error(message.to_string())))
                 }

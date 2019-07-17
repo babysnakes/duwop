@@ -6,15 +6,12 @@ use super::state::{AppState, ServiceConfigError, ServiceType};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
-use std::io::{self, Write};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use dns_lookup::lookup_host;
 use failure::{format_err, Error, ResultExt};
 use log::info;
-use text_io::{try_read, try_scan};
-use url::Url;
 use yansi::Paint;
 
 pub struct DuwopClient {
@@ -76,19 +73,11 @@ impl DuwopClient {
         self.reload_server_configuration()
     }
 
-    pub fn create_proxy_configuration(&self, name: String, url: Option<Url>) -> Result<(), Error> {
+    pub fn create_proxy_configuration(&self, name: String, port: u16) -> Result<(), Error> {
         let mut proxy_file = self.state_dir.clone();
         proxy_file.push(name);
-        let url = match url {
-            Some(url) => url,
-            None => {
-                print!("Please enter URL to reverse proxy (e.g. http://localhost:3000/):\n> ");
-                let _ = io::stdout().flush(); // not interested in the result
-                let s: String = try_read!()?;
-                Url::parse(&s).context(format!("could not parse url from: {}", &s))?
-            }
-        };
-        let st = ServiceType::ReverseProxy(url);
+        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
+        let st = ServiceType::ReverseProxy(addr);
         st.create(&proxy_file)?;
         info!("saved proxy file: {:?}", &proxy_file);
         self.reload_server_configuration()

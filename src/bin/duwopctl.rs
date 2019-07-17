@@ -10,7 +10,6 @@ use log::debug;
 use std::io;
 use std::path::PathBuf;
 use structopt::{self, StructOpt};
-use url::Url;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "duwopctl", author = "")]
@@ -72,10 +71,10 @@ enum CliSubCommand {
         level: Option<String>,
     },
 
-    /// Serve directory with web server.
+    /// Add directory to serve with web server.
     ///
-    /// This command will serve the specified target directory (or the current
-    /// directory if none specified) with a web server accessible as
+    /// Add configuration to serve the specified target directory (or the
+    /// current directory if none specified) with a web server accessible as
     /// http://<name>.test/. The name should not include the '.test' domain.
     #[structopt(name = "link", author = "")]
     Link {
@@ -88,19 +87,17 @@ enum CliSubCommand {
         source: Option<PathBuf>,
     },
 
-    /// Reverse proxy a URL
+    /// Add local port to reverse proxy.
     ///
-    /// This command will serve the specified target directory (or the current
-    /// directory if none specified) with a web server accessible as
-    /// http://<name>.test/. The name should not include the '.test' domain.
+    /// Add a configuration to reverse proxy the specified port (on localhost)
+    /// as http://<name>.test/. The name should not contain the '.test' domain.
     #[structopt(name = "proxy", author = "")]
     Proxy {
-        /// The hostname to use to proxy the URL
+        /// The hostname to use for the proxy
         name: String,
 
-        /// The URL to reverse proxy to, you will be prompted for it if not
-        /// specified
-        url: Option<Url>,
+        /// The port (on localhost) to point the proxy to
+        port: u16,
     },
 
     /// Deletes configuration (serve directory or reverse proxy)
@@ -204,7 +201,7 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::Link { name, source } => {
             duwop_client.create_static_file_configuration(name, source)
         }
-        CliSubCommand::Proxy { name, url } => duwop_client.create_proxy_configuration(name, url),
+        CliSubCommand::Proxy { name, port } => duwop_client.create_proxy_configuration(name, port),
         CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
         CliSubCommand::List => duwop_client.print_services(),
         CliSubCommand::Doctor => duwop_client.doctor(),
