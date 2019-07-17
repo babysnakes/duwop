@@ -1,4 +1,5 @@
 mod errors;
+mod reverse_proxy;
 mod static_files;
 
 use super::app_defaults::LAUNCHD_SOCKET;
@@ -11,19 +12,17 @@ use std::sync::{Arc, RwLock};
 
 use failure::{format_err, Error, ResultExt};
 use futures::{Future, Poll};
+use http::StatusCode;
 use hyper::header::HOST;
 use hyper::{self, Body, Request, Response};
-use hyper_reverse_proxy;
 use log::{debug, error, info, trace};
 use tokio::net::TcpListener;
 
-type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
-type StaticFuture = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 
 enum MainFuture {
-    Static(StaticFuture),
-    ReverseProxy(BoxFut),
+    Static(ErrorFut),
+    ReverseProxy(ErrorFut),
     ErrorResponse(ErrorFut),
 }
 
@@ -56,6 +55,8 @@ impl Server {
         }
     }
 
+    /// We can not launch hyper the default way because we might not have a
+    /// socket to bind to (e.g. in case we use launchd).
     pub fn run(self) -> Box<impl Future<Item = (), Error = ()> + Send> {
         use futures::stream::Stream;
         use hyper::server::conn::Http;
@@ -72,8 +73,10 @@ impl Server {
                         state: Arc::clone(&self.state),
                         remote_addr: source_address,
                     };
-                    http.serve_connection(socket, service)
-                        .map_err(|e| error!("{:?}", e))
+                    tokio::spawn(
+                        http.serve_connection(socket, service)
+                            .map_err(|e| error!("{:?}", e)),
+                    )
                 }),
         )
     }
@@ -137,15 +140,12 @@ impl hyper::service::Service for MainService {
                     MainFuture::Static(Box::new(static_files::serve(req, &PathBuf::from(path))))
                 }
                 ServiceType::ReverseProxy(addr) => {
-                    MainFuture::ReverseProxy(hyper_reverse_proxy::call(
-                        self.remote_addr.ip(),
-                        &format!("http://{}", addr.to_string()),
-                        req,
-                    ))
+                    let handler = reverse_proxy::ProxyHandler::new(self.remote_addr, *addr);
+                    MainFuture::ReverseProxy(Box::new(handler.serve(req)))
                 }
-                ServiceType::InvalidConfig(message) => {
-                    MainFuture::ErrorResponse(Box::new(displayed_error(message.to_string())))
-                }
+                ServiceType::InvalidConfig(message) => MainFuture::ErrorResponse(Box::new(
+                    displayed_error(StatusCode::INTERNAL_SERVER_ERROR, message.to_string()),
+                )),
             },
         }
     }

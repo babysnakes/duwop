@@ -26,12 +26,15 @@ pub fn internal_server_error(err: Error) -> impl Future<Item = Response<Body>, E
     .map_err(Error::from)
 }
 
-pub fn displayed_error(message: String) -> impl Future<Item = Response<Body>, Error = Error> {
+pub fn displayed_error(
+    code: StatusCode,
+    message: String,
+) -> impl Future<Item = Response<Body>, Error = Error> {
     warn!("displayed error: {}", message);
     futures::future::result(
         Response::builder()
             .header("Content-Type", "text/plain; charset=utf-8")
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .status(code)
             .body(Body::from(message)),
     )
     .map_err(Error::from)
