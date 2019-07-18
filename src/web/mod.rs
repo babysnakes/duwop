@@ -1,30 +1,105 @@
 mod errors;
+mod reverse_proxy;
 mod static_files;
 
+use super::app_defaults::LAUNCHD_SOCKET;
 use super::state::{AppState, ServiceType};
 use errors::*;
 
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use failure::{format_err, Error};
-use futures::future;
+use failure::{format_err, Error, ResultExt};
 use futures::{Future, Poll};
+use http::StatusCode;
 use hyper::header::HOST;
-use hyper::{Body, Request, Response, Server};
-use hyper_reverse_proxy;
-
+use hyper::{self, Body, Request, Response};
 use log::{debug, error, info, trace};
+use tokio::net::TcpListener;
 
-type BoxFut = Box<Future<Item = Response<Body>, Error = hyper::Error> + Send>;
-type StaticFuture = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 
 enum MainFuture {
-    Static(StaticFuture),
-    ReverseProxy(BoxFut),
+    Static(ErrorFut),
+    ReverseProxy(ErrorFut),
     ErrorResponse(ErrorFut),
+}
+
+/// Hyper `Service` implementation that serves all requests.
+struct MainService {
+    state: Arc<RwLock<AppState>>,
+    remote_addr: SocketAddr,
+}
+
+pub struct Server {
+    listener: ServerListener,
+    state: Arc<RwLock<AppState>>,
+}
+
+enum ServerListener {
+    TcpListener(SocketAddr),
+    Launchd,
+}
+
+impl Server {
+    pub fn new(port: u16, launchd: bool, state: Arc<RwLock<AppState>>) -> Self {
+        let listener = if launchd {
+            ServerListener::Launchd
+        } else {
+            ServerListener::TcpListener((Ipv4Addr::LOCALHOST, port).into())
+        };
+        Server {
+            listener,
+            state: Arc::clone(&state),
+        }
+    }
+
+    /// We can not launch hyper the default way because we might not have a
+    /// socket to bind to (e.g. in case we use launchd).
+    pub fn run(self) -> Box<impl Future<Item = (), Error = ()> + Send> {
+        use futures::stream::Stream;
+        use hyper::server::conn::Http;
+
+        let listener = self.listener.to_listener().unwrap();
+        let http = Http::new();
+        Box::new(
+            listener
+                .incoming()
+                .map_err(|e| error!("{:?}", e))
+                .for_each(move |socket| {
+                    let source_address = socket.peer_addr().unwrap();
+                    let service = MainService {
+                        state: Arc::clone(&self.state),
+                        remote_addr: source_address,
+                    };
+                    tokio::spawn(
+                        http.serve_connection(socket, service)
+                            .map_err(|e| error!("{:?}", e)),
+                    )
+                }),
+        )
+    }
+}
+
+impl ServerListener {
+    fn to_listener(&self) -> Result<TcpListener, Error> {
+        match self {
+            ServerListener::Launchd => {
+                info!(
+                    "listening for web requests on launchd socket: {}",
+                    LAUNCHD_SOCKET
+                );
+                get_activation_socket(LAUNCHD_SOCKET)
+            }
+            ServerListener::TcpListener(addr) => {
+                info!("listening for web requests on {}", &addr);
+                TcpListener::bind(&addr)
+                    .context("binding to requested por")
+                    .map_err(Error::from)
+            }
+        }
+    }
 }
 
 impl Future for MainFuture {
@@ -36,19 +111,6 @@ impl Future for MainFuture {
             MainFuture::Static(ref mut future) => future.poll().map_err(Error::from),
             MainFuture::ReverseProxy(ref mut future) => future.poll().map_err(Error::from),
             MainFuture::ErrorResponse(ref mut future) => future.poll().map_err(Error::from),
-        }
-    }
-}
-
-/// Hyper `Service` implementation that serves all requests.
-struct MainService {
-    state: Arc<RwLock<AppState>>,
-}
-
-impl MainService {
-    fn new(state: Arc<RwLock<AppState>>) -> MainService {
-        MainService {
-            state: Arc::clone(&state),
         }
     }
 }
@@ -65,48 +127,27 @@ impl hyper::service::Service for MainService {
             Ok(host) => host,
             Err(e) => return MainFuture::ErrorResponse(Box::new(internal_server_error(e))),
         };
-        debug!("received request for key: {}, uri: {}", key, &req.uri());
+        debug!(
+            "received request for key: {}, uri: {}, from: {}",
+            key,
+            &req.uri(),
+            &self.remote_addr
+        );
         match state.services.get(key) {
             None => MainFuture::ErrorResponse(Box::new(handle_404())),
             Some(service) => match service {
                 ServiceType::StaticFiles(path) => {
                     MainFuture::Static(Box::new(static_files::serve(req, &PathBuf::from(path))))
                 }
-                ServiceType::ReverseProxy(url) => MainFuture::ReverseProxy(
-                    hyper_reverse_proxy::call([127, 0, 0, 1].into(), &url.as_str(), req),
-                ),
-                ServiceType::InvalidConfig(message) => {
-                    MainFuture::ErrorResponse(Box::new(displayed_error(message.to_string())))
+                ServiceType::ReverseProxy(addr) => {
+                    let handler = reverse_proxy::ProxyHandler::new(self.remote_addr, *addr);
+                    MainFuture::ReverseProxy(Box::new(handler.serve(req)))
                 }
+                ServiceType::InvalidConfig(message) => MainFuture::ErrorResponse(Box::new(
+                    displayed_error(StatusCode::INTERNAL_SERVER_ERROR, message.to_string()),
+                )),
             },
         }
-    }
-}
-
-pub fn new_server(
-    port: u16,
-    launchd: bool,
-    state: Arc<RwLock<AppState>>,
-) -> Box<Future<Item = (), Error = ()> + Send> {
-    if launchd {
-        // It's probably ok to panic if we didn't get socket.
-        let listener = get_activation_socket().unwrap();
-        info!("Listening for web requests on launchd socket");
-        Box::new(
-            Server::from_tcp(listener)
-                .unwrap()
-                .serve(move || future::ok::<_, Error>(MainService::new(Arc::clone(&state))))
-                .map_err(|e| error!("{:?}", e)),
-        )
-    } else {
-        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
-        info!("Listening for web requests on {}", &addr);
-
-        Box::new(
-            Server::bind(&addr)
-                .serve(move || future::ok::<_, Error>(MainService::new(Arc::clone(&state))))
-                .map_err(|e| error!("{:?}", e)),
-        )
     }
 }
 
@@ -137,23 +178,25 @@ extern "C" {
 }
 
 #[cfg(target_os = "macos")]
-fn get_activation_socket() -> Result<TcpListener, Error> {
+fn get_activation_socket(socket_name: &str) -> Result<TcpListener, Error> {
     use libc::free;
     use std::ffi::CString;
     use std::os::unix::io::FromRawFd;
     use std::ptr::null_mut;
+    use tokio::reactor::Handle;
     unsafe {
         let mut fds: *mut c_int = null_mut();
         let mut cnt: size_t = 0;
 
-        let name = CString::new("DuwopSocket").expect("CString::new failed");
+        let name = CString::new(socket_name).expect("CString::new failed");
         match launch_activate_socket(name.as_ptr(), &mut fds, &mut cnt) {
             0 => {
                 debug!("name is {:?}, cnt is {}, fds is {:#?}", name, cnt, fds);
                 if cnt == 1 {
-                    let socket = TcpListener::from_raw_fd(*fds.offset(0));
+                    let std_listener = std::net::TcpListener::from_raw_fd(*fds.offset(0));
                     free(fds as *mut c_void);
-                    Ok(socket)
+                    let listener = TcpListener::from_std(std_listener, &Handle::default())?;
+                    Ok(listener)
                 } else {
                     Err(format_err!(
                         "Could not get fd: cnt should be 1 but is {}",
@@ -173,7 +216,7 @@ fn get_activation_socket() -> Result<TcpListener, Error> {
 // might want to use specific functionality on different platform so we might as
 // well make it compile.
 #[cfg(not(target_os = "macos"))]
-fn get_activation_socket() -> Result<TcpListener, Error> {
+fn get_activation_socket(_: &str) -> Result<TcpListener, Error> {
     Err(format_err!("Only supported on macos"))
 }
 
@@ -190,7 +233,10 @@ pub mod tests {
         req: Request<Body>,
         state: Arc<RwLock<AppState>>,
     ) -> Result<Response<Body>, Error> {
-        let mut service = MainService { state };
+        let mut service = MainService {
+            state,
+            remote_addr: (Ipv4Addr::LOCALHOST, 10000).into(), // demo remote address
+        };
         let response = service.call(req);
         let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create a runtime");
         runtime.block_on(response)

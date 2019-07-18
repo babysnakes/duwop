@@ -3,7 +3,7 @@ use duwop::cli_helpers::*;
 use duwop::dns::DNSServer;
 use duwop::management::Server as ManagementServer;
 use duwop::state::AppState;
-use duwop::web;
+use duwop::web::Server as WebServer;
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -69,7 +69,10 @@ fn main() {
 }
 
 fn run(app: Cli) -> Result<(), Error> {
-    let log_level = app.custom_log_level.clone().unwrap_or(LOG_LEVEL.to_owned());
+    let log_level = app
+        .custom_log_level
+        .clone()
+        .unwrap_or_else(|| LOG_LEVEL.to_owned());
     // TODO: can we do it (enable log to file if launchd) automatically with clap?
     let log_handler = if app.log_to_file || app.launchd {
         let mut logdir = match dirs::home_dir() {
@@ -98,11 +101,12 @@ fn run(app: Cli) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(app.dns_port.unwrap_or(DNS_PORT))?;
-    let web_server = web::new_server(
+    let web_server = WebServer::new(
         app.http_port.unwrap_or(HTTP_PORT),
         app.launchd,
         Arc::clone(&locked),
-    );
+    )
+    .run();
     let management_server = ManagementServer::new(
         app.management_port.unwrap_or(MANAGEMENT_PORT),
         Arc::clone(&locked),
