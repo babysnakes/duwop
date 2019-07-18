@@ -36,7 +36,7 @@ struct Cli {
     #[structopt(name = "verbose", short = "v", global = true, parse(from_occurrences))]
     verbose: u8,
 
-    /// only log warnings and errors
+    /// quiet mode - only report warnings and errors
     #[structopt(short = "q", global = true, conflicts_with = "verbose")]
     quiet: bool,
 
@@ -46,7 +46,11 @@ struct Cli {
 
 #[derive(Debug, StructOpt)]
 enum CliSubCommand {
-    /// Reload duwop configuration from disk.
+    /// Instruct the server to reload configuration.
+    ///
+    /// This is only required if you changed configuration manually. Every
+    /// configuration command (e.g. link, proxy etc) will signal to duwop to
+    /// reload configuration.
     #[structopt(name = "reload", author = "")]
     Reload,
 
@@ -111,17 +115,27 @@ enum CliSubCommand {
     },
 
     /// List available services.
+    /// 
+    /// Also displays service mis-configurations.
     #[structopt(name = "list", author = "")]
     List,
 
-    /// Run diagnostics on service and database
+    /// Run diagnostics (server, configuration, DNS, etc).
+    ///
+    /// Use after updates and when something seems wrong. Currently it doesn't
+    /// really get smart state from the server, just the fact that it's running.
     #[structopt(name = "doctor", author = "")]
     Doctor,
 
-    /// Generate shell completions for the provided shell
+    /// Generate shell completions for the provided shell.
     ///
-    /// THe completion script outputs to stdout. Redirect it into a file for
-    /// saving.
+    /// This command will generate a file with the matching name (for the
+    /// requested shell) in the specified target directory (default to current
+    /// directory).
+    ///
+    /// Completion scripts should be placed in spacial directories (depending on
+    /// the shell). It is assumed that you know your shell requirements and
+    /// where to save the completion script.
     #[structopt(name = "completion", author = "")]
     Completion {
         /// the shell to generate completion for
@@ -133,7 +147,7 @@ enum CliSubCommand {
         target_dir: String,
     },
 
-    /// Setup duwop (for new installations or upgrades)
+    /// Setup duwop (for new installations or upgrades).
     ///
     /// Creates required directories, config files, agent configuration, etc.
     /// Should not modify existing files/configs except for agent configuration.
