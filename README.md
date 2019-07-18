@@ -6,7 +6,8 @@ required manual 3rd-party installation) but there's still time.
 This project aims to perform the following tasks:
 
 * Serve local directories as HTTP.
-* Reverse proxy local running services.
+* Reverse proxy local web servers running on other ports (e.g. webpack, api dev
+  server etc).
 * Reverse proxy local docker containers (by container name) provided they serve
   only one port (so there's no need to specify local ports when running `docker
   run...`).
@@ -47,18 +48,21 @@ Enjoy
 
 ### Project status
 
->Note that even the implemented features are of beta quality, Please report bugs.
+>Note that even the implemented features are of beta quality, Please report
+>bugs.
 
+**Missing Features**
+* Docker serving is not yet implemented. It's possible to implement it
+    manually in terms of reverse proxy.
+* SSL support not implemented yet.
+
+**Enhancements**:
 * Serving directories:
   * Directory listing are not supported. If no `index.html` file in the
-    directory 404 is returned (low priority).
+    directory 404 is returned - low priority.
 * Reverse proxy:
-  * Only basic reverse proxy is supported. No support for streams, upgrades etc
-    (high priority).
-* Completely missing features:
-    * Docker serving is not yet implemented. It's possible to implement it
-      manually in terms of reverse proxy.
-    * SSL support not implemented yet.
+  * Possibly allow to proxy web servers that are running on other internal ports
+    (e.g. in VMware etc) - very low priority.
 
 ### Development environment setup
 
@@ -79,11 +83,20 @@ Enjoy
 * Big credit goes to [Emil Hernvall][emil] for his great [dnsguide][]. The
   entire DNS implementation is copied (with slight modifications) from his guide
   with his permission.
+* Another big credit goes to [Klaus Purer][klaus1] for his [rustnish][] project. My proxy implementation is heavily based on this project.
 * The [basic-http-server][bhttp] project. The base of the static files serving
   code is copied from this project.
 
+### Breaking Changes
+
+#### 0.3.0-beta1
+
+* Proxy configuration has changed from `proxy:http://hostname:port/` to
+  `proxy:hostname:post`. No auto conversion.
 
 [pd]: https://github.com/puma/puma-dev
 [emil]: https://github.com/EmilHernvall
 [dnsguide]: https://github.com/EmilHernvall/dnsguide
+[klaus1]: https://klau.si
 [bhttp]: https://github.com/brson/basic-http-server
+[rustnish]: https://github.com/klausi/rustnish
