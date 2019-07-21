@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use dotenv;
-use failure::{format_err, Error};
+use failure::Error;
 use flexi_logger::{Cleanup, Criterion, Logger, Naming};
 use futures::future::{self, Future};
 use log::{debug, error, info};
@@ -75,14 +75,9 @@ fn run(app: Cli) -> Result<(), Error> {
         .unwrap_or_else(|| LOG_LEVEL.to_owned());
     // TODO: can we do it (enable log to file if launchd) automatically with clap?
     let log_handler = if app.log_to_file || app.launchd {
-        let mut logdir = match dirs::home_dir() {
-            Some(home) => home,
-            None => return Err(format_err!("could not extract home directory")),
-        };
-        logdir.push(LOG_DIR);
         Logger::with_str(&log_level)
             .log_to_file()
-            .directory(logdir)
+            .directory(LOG_DIR.to_owned())
             .rotate(
                 Criterion::Size(10_000_000),
                 Naming::Numbers,
@@ -96,7 +91,7 @@ fn run(app: Cli) -> Result<(), Error> {
     info!("Starting...");
     debug!("running with options: {:#?}", app);
     let locked_handler = Arc::new(RwLock::new(log_handler));
-    let state_dir = app.state_dir.unwrap_or_else(state_dir);
+    let state_dir = app.state_dir.unwrap_or(STATE_DIR.to_owned());
     let mut app_state = AppState::new(&state_dir);
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));

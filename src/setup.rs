@@ -4,7 +4,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use dirs;
 use failure::{format_err, Error, ResultExt};
 use log::debug;
 use yansi::Paint;
@@ -29,23 +28,12 @@ enum IoOperation {
 
 impl Setup {
     pub fn new(dry_run: bool) -> Self {
-        let home_dir = dirs::home_dir().expect("couldn't infer home directory!");
-        let mut state_dir = home_dir.clone();
-        state_dir.push(STATE_DIR_RELATIVE);
-        let mut log_dir = home_dir.clone();
-        log_dir.push(LOG_DIR);
-        let mut launchd_agents_dir = home_dir.clone();
-        launchd_agents_dir.push(&LAUNCH_AGENTS_DIR);
-        let launchd_filename = format!("{}.plist", &AGENT_NAME);
-        let mut agent_file = launchd_agents_dir.clone();
-        agent_file.push(&launchd_filename);
-
         Setup {
             dry_run,
-            state_dir,
-            log_dir,
-            launchd_agents_dir,
-            agent_file,
+            state_dir: STATE_DIR.to_owned(),
+            log_dir: LOG_DIR.to_owned(),
+            launchd_agents_dir: USER_LAUNCHD_DIR.to_owned(),
+            agent_file: LAUNCHD_AGENT_FILE.to_owned(),
             resolver_directory: RESOLVER_DIR.to_owned(),
             resolver_file: format!("{}{}", &RESOLVER_DIR, RESOLVER_FILE),
         }
