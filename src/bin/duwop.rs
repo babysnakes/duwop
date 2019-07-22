@@ -33,9 +33,26 @@ struct Cli {
     )]
     http_port: Option<u16>,
 
+    /// alternative HTTPS port
+    #[structopt(
+        name = "https-port",
+        long = "https-port",
+        value_name = "PORT",
+        env = "DUWOP_HTTPS_PORT"
+    )]
+    https_port: Option<u16>,
+
     /// alternative management port
     #[structopt(long = "mgmt-port", value_name = "PORT", env = "DUWOP_MANAGEMENT_PORT")]
     management_port: Option<u16>,
+
+    /// alternative certificate file
+    #[structopt(long = "cert", value_name = "FILE", env = "DUWOP_CERTIFICATE_FILE")]
+    certificate_file: Option<PathBuf>,
+
+    /// alternative private key
+    #[structopt(long = "private-key", value_name = "FILE", env = "DUWOP_PRIVATE_KEY")]
+    private_key: Option<PathBuf>,
 
     // development only, hidden
     #[structopt(long = "state-dir", hidden = true, env = "DUWOP_APP_STATE_DIR")]
@@ -96,11 +113,19 @@ fn run(app: Cli) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(app.dns_port.unwrap_or(DNS_PORT))?;
-    let web_server = WebServer::new(
+    let web_server = WebServer::new_http(
         app.http_port.unwrap_or(HTTP_PORT),
         app.launchd,
         Arc::clone(&locked),
-    )
+    )?
+    .run();
+    let web_server_ssl = WebServer::new_https(
+        app.https_port.unwrap_or(HTTPS_PORT),
+        app.launchd,
+        app.certificate_file.unwrap_or(CERT_FILE.to_owned()),
+        app.private_key.unwrap_or(PRIV_KEY.to_owned()),
+        Arc::clone(&locked),
+    )?
     .run();
     let management_server = ManagementServer::new(
         app.management_port.unwrap_or(MANAGEMENT_PORT),
@@ -114,6 +139,7 @@ fn run(app: Cli) -> Result<(), Error> {
             error!("DNS Server error: {:?}", err);
         }));
         tokio::spawn(web_server);
+        tokio::spawn(web_server_ssl);
         tokio::spawn(management_server);
         Ok(())
     }));

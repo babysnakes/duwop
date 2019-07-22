@@ -6,6 +6,12 @@ DUWOP_MANAGEMENT_PORT=9254
 # developer data directory
 DUWOP_APP_STATE_DIR=/path/to/repository/root/devdata/
 
+# cert and private key. You could use the default (in ~/.duwop/ssl) if your
+# installed version support it, but you can also override the files here.
+# Uncomment and make sure it matches your existing files.
+#DUWOP_CERTIFICATE_FILE=/path/to/repository/root/devssl/private.crt
+#DUWOP_PRIVATE_KEY=/path/to/repository/root/devssl/private.keyp
+
 # (Undocumented) custom log level. Affects only server (duwop). Comment out to
 # run on default level during development.
 DUWOP_LOG_LEVEL="duwop=trace,tokio=warn"
