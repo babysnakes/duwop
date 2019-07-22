@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub const DNS_PORT: u16 = 9053;
 pub const HTTP_PORT: u16 = 80;
+pub const HTTPS_PORT: u16 = 443;
 pub const MANAGEMENT_PORT: u16 = 9054;
 pub const LOG_LEVEL: &str = "duwop=info";
 /// The name of the launchd agent
@@ -13,6 +14,8 @@ pub const RESOLVER_DIR: &str = "/etc/resolver/";
 pub const RESOLVER_FILE: &str = "test";
 /// The name of the HTTP socket in launchd agent file
 pub const LAUNCHD_SOCKET: &str = "DuwopSocket";
+/// The name of the HTTPS socket in launchd agent file
+pub const LAUNCHD_TLS_SOCKET: &str = "DuwopTlsSocket";
 
 lazy_static! {
   /// Home directory
@@ -46,6 +49,23 @@ lazy_static! {
     let mut file = USER_LAUNCHD_DIR.clone();
     let filename = format!("{}.plist", &AGENT_NAME);
     file.push(filename);
+    file
+  };
+  static ref CERTS_DIR: PathBuf = {
+    let mut dir = DUWOP_DIR.clone();
+    dir.push("ssl");
+    dir
+  };
+  /// Default certificate file
+  pub static ref CERT_FILE: PathBuf = {
+    let mut file = CERTS_DIR.clone();
+    file.push("duwop.crt");
+    file
+  };
+  /// Default public key file.
+  pub static ref PRIV_KEY: PathBuf = {
+    let mut file = CERTS_DIR.clone();
+    file.push("duwop.key");
     file
   };
 }

@@ -2,21 +2,33 @@ mod errors;
 mod reverse_proxy;
 mod static_files;
 
-use super::app_defaults::LAUNCHD_SOCKET;
+use super::app_defaults::{LAUNCHD_SOCKET, LAUNCHD_TLS_SOCKET};
 use super::state::{AppState, ServiceType};
 use errors::*;
 
+use std::fs::File;
+use std::io::BufReader;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use failure::{format_err, Error, ResultExt};
-use futures::{Future, Poll};
+use futures::{future, future::Either, Future, Poll};
 use http::StatusCode;
 use hyper::header::HOST;
+use hyper::server::conn::AddrStream;
+use hyper::service::{make_service_fn, service_fn_ok, MakeService, Service};
 use hyper::{self, Body, Request, Response};
 use log::{debug, error, info, trace};
 use tokio::net::TcpListener;
+#[allow(unused_imports)] // FIX: remove
+use tokio_rustls::{
+    rustls::{
+        internal::pemfile::{certs, rsa_private_keys},
+        Certificate, NoClientAuth, PrivateKey, ServerConfig,
+    },
+    TlsAcceptor,
+};
 
 type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 
@@ -32,65 +44,169 @@ struct MainService {
     remote_addr: SocketAddr,
 }
 
-pub struct Server {
-    listener: ServerListener,
-    state: Arc<RwLock<AppState>>,
+pub enum Server {
+    Http {
+        listener: ServerListener,
+        state: Arc<RwLock<AppState>>,
+    },
+    Https {
+        listener: ServerListener,
+        state: Arc<RwLock<AppState>>,
+        tls_acceptor: TlsAcceptor,
+    },
 }
 
-enum ServerListener {
+pub enum ServerListener {
     TcpListener(SocketAddr),
-    Launchd,
+    Launchd(String),
 }
 
 impl Server {
-    pub fn new(port: u16, launchd: bool, state: Arc<RwLock<AppState>>) -> Self {
+    pub fn new_http(port: u16, launchd: bool, state: Arc<RwLock<AppState>>) -> Result<Self, Error> {
         let listener = if launchd {
-            ServerListener::Launchd
+            ServerListener::Launchd(LAUNCHD_SOCKET.to_string())
         } else {
             ServerListener::TcpListener((Ipv4Addr::LOCALHOST, port).into())
         };
-        Server {
-            listener,
-            state: Arc::clone(&state),
-        }
+        Ok(Server::Http { listener, state })
     }
 
-    /// We can not launch hyper the default way because we might not have a
-    /// socket to bind to (e.g. in case we use launchd).
-    pub fn run(self) -> Box<impl Future<Item = (), Error = ()> + Send> {
+    pub fn new_https(
+        port: u16,
+        launchd: bool,
+        cert: PathBuf,
+        priv_key: PathBuf,
+        state: Arc<RwLock<AppState>>,
+    ) -> Result<Self, Error> {
+        let tls_acceptor = get_tls_acceptor(cert, priv_key)?;
+        let listener = if launchd {
+            ServerListener::Launchd(LAUNCHD_TLS_SOCKET.to_string())
+        } else {
+            ServerListener::TcpListener((Ipv4Addr::LOCALHOST, port).into())
+        };
+        Ok(Server::Https {
+            listener,
+            state,
+            tls_acceptor,
+        })
+    }
+
+    /// Run the server
+    pub fn run(self) -> Box<Future<Item = (), Error = ()> + Send> {
+        // We can not launch hyper the default way because we might not have a
+        // socket to bind to (e.g. in case we use launchd).
         use futures::stream::Stream;
         use hyper::server::conn::Http;
 
-        let listener = self.listener.to_listener().unwrap();
-        let http = Http::new();
-        Box::new(
-            listener
-                .incoming()
-                .map_err(|e| error!("{:?}", e))
-                .for_each(move |socket| {
-                    let source_address = socket.peer_addr().unwrap();
-                    let service = MainService {
-                        state: Arc::clone(&self.state),
-                        remote_addr: source_address,
+        match self {
+            Server::Http { listener, state } => {
+                let listener = listener.to_listener().unwrap();
+                let http = Http::new();
+                let state = Arc::clone(&state);
+                Box::new(
+                    // Either::A(
+                    listener.incoming().map_err(|e| error!("{:?}", e)).for_each(
+                        move |socket| {
+                            let source_address = socket.peer_addr().unwrap();
+                            let service = MainService {
+                                state: Arc::clone(&state),
+                                remote_addr: source_address,
+                            };
+                            tokio::spawn(
+                                http.serve_connection(socket, service)
+                                    .map_err(|e| error!("{:?}", e)),
+                            )
+                        },
+                        )
+                    // ),
+                )
+            }
+            Server::Https {
+                listener,
+                state,
+                tls_acceptor,
+            } => {
+                // unimplemented!()
+                let listener = listener.to_listener().unwrap();
+                let http = Http::new();
+                let state = Arc::clone(&state);
+                let acceptor = tls_acceptor.clone();
+                let done = listener.incoming()
+                    .map_err(|e| error!("{:?}", e))
+                    .for_each(move |stream| {
+                        let addr = stream.peer_addr().unwrap();
+                        let done = acceptor.accept(stream)
+                            .map_err(|e| error!("{:?}", e))
+                            .and_then(|stream| {
+                                let service = MainService {
+                                    state: Arc::clone(&state),
+                                    remote_addr: addr,
+                                };
+                                let done = http.serve_connection(stream, service)
+                                .map_err(|e| error!("{:?}", e));
+                                tokio::spawn(done)
+                            });
+                        tokio::spawn(done)
+                    });
+                    Box::new(done)
+
+                // Box::new(Either::B(tokio::spawn(done.map_err(|e| error!("error")))))
+            }
+        }
+    }
+
+    pub fn run2(
+        self,
+    ) -> Box<dyn hyper::rt::Future<Item = (), Error = hyper::error::Error> + Send> {
+        use futures::stream::Stream;
+
+        let make_svc = |state: Arc<RwLock<AppState>>| {
+            let state = Arc::clone(&state);
+            make_service_fn(move |socket: &AddrStream| {
+                let state = Arc::clone(&state);
+                let remote_addr = socket.remote_addr();
+                service_fn_ok(move |req: Request<Body>| {
+                    let state = Arc::clone(&state);
+                    let state = state.read().unwrap(); // if read state fails we better panic.
+                    let key = match extract_host(&req) {
+                        Ok(host) => host,
+                        Err(e) => return Response::new(Body::from(format!("couldn't find host: {}", e))),
                     };
-                    tokio::spawn(
-                        http.serve_connection(socket, service)
-                            .map_err(|e| error!("{:?}", e)),
-                    )
-                }),
-        )
+                    debug!(
+                        "received request for key: {}, uri: {}, from: {}",
+                        key,
+                        &req.uri(),
+                        remote_addr
+                    );
+                    match state.services.get(key) {
+                        None => return Response::new(Body::from(format!("host not configured: {}", key))),
+                        Some(service) => match service {
+                            ServiceType::StaticFiles(path) => Response::new(Body::from(format!("would serve static directory {:?}", path))),
+                            ServiceType::ReverseProxy(addr) => Response::new(Body::from(format!("would server reverse proxy: {}", &addr))),
+                            ServiceType::InvalidConfig(message) => Response::new(Body::from(format!("would server invalid config: {}", &message))),
+                        }
+                    }
+                })
+            })
+        };
+
+        match self {
+            // Server::Http { listener, state } => {
+            //     let listener = listener.to_listener().unwrap(); // Fix handle errors
+            //     Box::new(hyper::server::Server::builder(listener).serve(make_svc(Arc::clone(&state))))
+            // }
+            Server::Http { listener, state } => unimplemented!(),
+            Server::Https { listener, state, tls_acceptor } => unimplemented!(),
+        }
     }
 }
 
 impl ServerListener {
     fn to_listener(&self) -> Result<TcpListener, Error> {
         match self {
-            ServerListener::Launchd => {
-                info!(
-                    "listening for web requests on launchd socket: {}",
-                    LAUNCHD_SOCKET
-                );
-                get_activation_socket(LAUNCHD_SOCKET)
+            ServerListener::Launchd(name) => {
+                info!("listening for web requests on launchd socket: {}", name);
+                get_activation_socket(name)
             }
             ServerListener::TcpListener(addr) => {
                 info!("listening for web requests on {}", &addr);
@@ -210,6 +326,17 @@ fn get_activation_socket(socket_name: &str) -> Result<TcpListener, Error> {
             )),
         }
     }
+}
+
+fn get_tls_acceptor(cert: PathBuf, priv_key: PathBuf) -> Result<TlsAcceptor, Error> {
+    unimplemented!()
+    // let cert_file = File::open(&cert).context("opening certificate file")?;
+    // let certs = certs(&mut BufReader::new(cert_file))
+    //     .map_err(|_| format_err!("Failed to open certificate"))?;
+    // let key_file = File::open(&priv_key).context("opening private key")?;
+    // let key = rsa_private_keys(&mut BufReader::new(key_file))
+    //     .map_err(|_| format_err!("Failed to read private key"))?
+    //     .remove(0);
 }
 
 // While it's not currently intended to be supported on other platforms, one
