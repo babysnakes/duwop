@@ -207,7 +207,7 @@ fn main() {
 fn run(app: Cli) -> Result<(), Error> {
     debug!("running with options: {:#?}", app);
     let mgmt_port = app.mgmt_port.unwrap_or(MANAGEMENT_PORT);
-    let state_dir = app.state_dir.unwrap_or(STATE_DIR.to_owned());
+    let state_dir = app.state_dir.unwrap_or_else(|| STATE_DIR.to_owned());
     let duwop_client = DuwopClient::new(mgmt_port, state_dir);
     match app.command {
         CliSubCommand::Reload => duwop_client.reload_server_configuration(),

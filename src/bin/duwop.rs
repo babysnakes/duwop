@@ -108,7 +108,7 @@ fn run(app: Cli) -> Result<(), Error> {
     info!("Starting...");
     debug!("running with options: {:#?}", app);
     let locked_handler = Arc::new(RwLock::new(log_handler));
-    let state_dir = app.state_dir.unwrap_or(STATE_DIR.to_owned());
+    let state_dir = app.state_dir.unwrap_or_else(|| STATE_DIR.to_owned());
     let mut app_state = AppState::new(&state_dir);
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
@@ -122,8 +122,8 @@ fn run(app: Cli) -> Result<(), Error> {
     let web_server_ssl = WebServer::new_https(
         app.https_port.unwrap_or(HTTPS_PORT),
         app.launchd,
-        app.certificate_file.unwrap_or(CERT_FILE.to_owned()),
-        app.private_key.unwrap_or(PRIV_KEY.to_owned()),
+        app.certificate_file.unwrap_or_else(|| CERT_FILE.to_owned()),
+        app.private_key.unwrap_or_else(|| PRIV_KEY.to_owned()),
         Arc::clone(&locked),
     )?
     .run();

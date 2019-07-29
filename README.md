@@ -75,7 +75,7 @@ Enjoy
   environment variable) to make sure your editing the development state
   directory. If you have setup your `.env` file correctly (previous bullet) and
   you are running from within the repository root you don't have to do anything,
-  the development `devdata` directory is enabbled automatically.
+  the development `devdata` directory is enabled automatically.
 * Do not use `--log-to-file` option as the log directory is hard-coded.
 
 ### Contributors

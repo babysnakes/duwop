@@ -6,8 +6,6 @@ use super::app_defaults::{LAUNCHD_SOCKET, LAUNCHD_TLS_SOCKET};
 use super::state::{AppState, ServiceType};
 use errors::*;
 
-use std::fs::File;
-use std::io::BufReader;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -18,14 +16,9 @@ use http::StatusCode;
 use hyper::header::HOST;
 use hyper::{self, Body, Request, Response};
 use log::{debug, error, info, trace};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use tokio::net::TcpListener;
-use tokio_rustls::{
-    rustls::{
-        internal::pemfile::{certs, pkcs8_private_keys,rsa_private_keys},
-        NoClientAuth, ServerConfig,
-    },
-    TlsAcceptor,
-};
+use tokio_openssl::SslAcceptorExt;
 
 type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 
@@ -49,7 +42,7 @@ pub enum Server {
     Https {
         listener: ServerListener,
         state: Arc<RwLock<AppState>>,
-        tls_acceptor: TlsAcceptor,
+        acceptor: SslAcceptor,
     },
 }
 
@@ -75,7 +68,7 @@ impl Server {
         priv_key: PathBuf,
         state: Arc<RwLock<AppState>>,
     ) -> Result<Self, Error> {
-        let tls_acceptor = get_tls_acceptor(cert, priv_key)?;
+        let acceptor = get_ssl_acceptor(cert, priv_key)?;
         let listener = if launchd {
             ServerListener::Launchd(LAUNCHD_TLS_SOCKET.to_string())
         } else {
@@ -84,7 +77,7 @@ impl Server {
         Ok(Server::Https {
             listener,
             state,
-            tls_acceptor,
+            acceptor,
         })
     }
 
@@ -117,11 +110,11 @@ impl Server {
             Server::Https {
                 listener,
                 state,
-                tls_acceptor,
+                acceptor,
             } => {
                 let listener = listener.to_listener().unwrap();
                 let state = Arc::clone(&state);
-                let acceptor = tls_acceptor.clone();
+                let acceptor = acceptor.clone();
                 let done =
                     listener
                         .incoming()
@@ -131,7 +124,7 @@ impl Server {
                             let state_clone = Arc::clone(&state);
                             let http = Http::new();
                             let done = acceptor
-                                .accept(stream)
+                                .accept_async(stream)
                                 .map_err(|e| error!("{:?}", e))
                                 .and_then(move |stream| {
                                     let service = MainService {
@@ -278,40 +271,16 @@ fn get_activation_socket(socket_name: &str) -> Result<TcpListener, Error> {
     }
 }
 
-/// Construct TLSAcceptor from the provided certs and private key.
-fn get_tls_acceptor(cert: PathBuf, priv_key: PathBuf) -> Result<TlsAcceptor, Error> {
-    macro_rules! get_reader {
-        ($f:expr) => {{
-            let f = File::open(&$f).context(format!("reading key/cert from {:?}", &$f))?;
-            BufReader::new(f)
-        }};
-    }
-    debug!("opening cert file ({:?}) and private key ({:?})", &cert, &priv_key);
-    let mut cert_buffer = get_reader!(&cert);
-    let certs = certs(&mut cert_buffer)
-        .map_err(|_| format_err!("Failed to open certificate"))?;
-    if certs.is_empty() { return Err(format_err!("invalid certificate {:?}", &cert))}
-    trace!("certificates: {:?}", certs);
-    let mut rsa_key_buffer = get_reader!(&priv_key);
-    let rsa_keys = rsa_private_keys(&mut rsa_key_buffer)
-        .map_err(|_| format_err!("Failed to read private key"))?;
-    let mut pkcs8_key_buffer = get_reader!(&priv_key);
-    let pkcs8_keys = pkcs8_private_keys(&mut pkcs8_key_buffer)
-        .map_err(|_| format_err!("Failed to read private key"))?;
-    // prefer pkcs keys
-    let key = if !pkcs8_keys.is_empty() {
-        pkcs8_keys[0].clone()
-    } else if !rsa_keys.is_empty() {
-        rsa_keys[0].clone()
-    } else {
-        return Err(format_err!("no valid keys found in {:?}", &priv_key))
-    };
-    trace!("key: {:?}", key);
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    config
-        .set_single_cert(certs, key)
-        .context("importing certificate")?;
-    Ok(TlsAcceptor::from(Arc::new(config)))
+/// Construct SslAcceptor from the provided certs and private key.
+fn get_ssl_acceptor(cert: PathBuf, priv_key: PathBuf) -> Result<SslAcceptor, Error> {
+    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
+    debug!("loading key file: {:?}", &priv_key);
+    acceptor.set_private_key_file(priv_key, SslFiletype::PEM)?;
+    debug!("loading certificate: {:?}", &cert);
+    acceptor.set_certificate_chain_file(cert)?;
+    acceptor.check_private_key()?;
+    debug!("certificate valid :)");
+    Ok(acceptor.build())
 }
 
 // While it's not currently intended to be supported on other platforms, one
