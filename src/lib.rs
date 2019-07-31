@@ -4,5 +4,6 @@ pub mod client;
 pub mod dns;
 pub mod management;
 pub mod setup;
+pub mod ssl;
 pub mod state;
 pub mod web;

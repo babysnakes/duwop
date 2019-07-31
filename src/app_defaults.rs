@@ -17,6 +17,11 @@ pub const LAUNCHD_SOCKET: &str = "DuwopSocket";
 /// The name of the HTTPS socket in launchd agent file
 pub const LAUNCHD_TLS_SOCKET: &str = "DuwopTlsSocket";
 
+pub const TLS_ENTRY_C: &str = "IL";
+pub const TLS_ENTRY_ST: &str = "Israel";
+pub const TLS_ENTRY_O: &str = "Duwop IO";
+pub const TLS_ENTRY_CN: &str = "Duwop Test";
+
 lazy_static! {
   /// Home directory
   pub static ref HOME_DIR: PathBuf = dirs::home_dir().expect("Couldn't extract home directory");
@@ -51,6 +56,21 @@ lazy_static! {
     file.push(filename);
     file
   };
+  pub static ref CA_DIR: PathBuf = {
+    let mut dir = HOME_DIR.clone();
+    dir.push("Library/Application Support/io.duwop");
+    dir
+  };
+  pub static ref CA_KEY: PathBuf = {
+    let mut path = CA_DIR.clone();
+    path.push("key.pem");
+    path
+  };
+  pub static ref CA_CERT: PathBuf = {
+    let mut path = CA_DIR.clone();
+    path.push("cert.pem");
+    path
+  };
   static ref CERTS_DIR: PathBuf = {
     let mut dir = DUWOP_DIR.clone();
     dir.push("ssl");
@@ -68,4 +88,12 @@ lazy_static! {
     file.push("duwop.key");
     file
   };
+}
+
+/// Construct a path in home directory _relative_ to home directory. THe provided
+/// path **must not** start with a slash.
+pub fn in_home_dir(path: &str) -> PathBuf {
+    let mut dir = HOME_DIR.clone();
+    dir.push(path);
+    dir
 }

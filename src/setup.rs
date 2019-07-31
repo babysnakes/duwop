@@ -1,11 +1,12 @@
 use super::app_defaults::*;
+use super::ssl;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use failure::{format_err, Error, ResultExt};
-use log::debug;
+use log::{debug, trace};
 use yansi::Paint;
 
 type SetupResult = Result<(), Error>;
@@ -18,12 +19,20 @@ pub struct Setup {
     agent_file: PathBuf,
     resolver_directory: String,
     resolver_file: String,
+    ca_dir: PathBuf,
+    ca_key_file: PathBuf,
+    ca_cert_file: PathBuf,
 }
 
 enum IoOperation {
+    /// Create directory with all required parent dirs.
     MkdirAll(PathBuf),
+    /// Delete a path (like `unlink`).
     RemoveFile(PathBuf),
-    WriteAllFile(PathBuf, String),
+    /// Create file with provided bytes.
+    WriteFile(PathBuf, Vec<u8>),
+    /// Create file with provided string.
+    WriteStringToFile(PathBuf, String),
 }
 
 impl Setup {
@@ -36,6 +45,9 @@ impl Setup {
             agent_file: LAUNCHD_AGENT_FILE.to_owned(),
             resolver_directory: RESOLVER_DIR.to_owned(),
             resolver_file: format!("{}{}", &RESOLVER_DIR, RESOLVER_FILE),
+            ca_dir: CA_DIR.to_owned(),
+            ca_key_file: CA_KEY.to_owned(),
+            ca_cert_file: CA_CERT.to_owned(),
         }
     }
 
@@ -47,6 +59,7 @@ impl Setup {
             self.install_gent()?;
         }
         self.install_resolve_file()?;
+        self.install_ca_cert()?;
 
         let bullet = format!("{} ", Paint::green("*"));
         let wrapper = textwrap::Wrapper::with_termwidth()
@@ -140,7 +153,8 @@ impl Setup {
             // we can safely ignore this command
             let _ = run_command(vec!["launchctl", "unload", agent_file], "", self.dry_run);
         }
-        let create_agent_file = IoOperation::WriteAllFile(self.agent_file.clone(), launchd_text);
+        let create_agent_file =
+            IoOperation::WriteStringToFile(self.agent_file.clone(), launchd_text);
         create_agent_file
             .perform(self.dry_run)
             .context("creating launchd agent file")?;
@@ -195,6 +209,50 @@ impl Setup {
         Ok(())
     }
 
+    fn install_ca_cert(&self) -> SetupResult {
+        if !self.ca_required().context("checking for valid CA")? {
+            info("valid CA already exists");
+            return Ok(());
+        }
+
+        info("creating a new SSL root certificate");
+        debug!("creating new Ca private key and certificate");
+        let (cert, key) = ssl::mk_ca_cert()?;
+        let required_dir = IoOperation::MkdirAll(self.ca_dir.to_owned());
+        let save_key =
+            IoOperation::WriteFile(self.ca_key_file.to_owned(), key.private_key_to_pem_pkcs8()?);
+        let save_cert = IoOperation::WriteFile(self.ca_cert_file.to_owned(), cert.to_pem()?);
+        required_dir.perform(self.dry_run)?;
+        save_key
+            .perform(self.dry_run)
+            .context("saving CA private key")?;
+        save_cert
+            .perform(self.dry_run)
+            .context("saving CA certificate")?;
+        info("Adding the newly created certificate to your keychain - so your browsers will trust it");
+        tell("You might be prompted to approve installing the created CA as a trusted certificate in your keychain");
+        match find_keychain() {
+            None => Err(format_err!("couldn't find any keychain file")),
+            Some(keychain) => {
+                run_command(
+                    vec![
+                        "security",
+                        "add-trusted-cert",
+                        "-d",
+                        "-r",
+                        "trustRoot",
+                        "-k",
+                        keychain.to_str().unwrap(),
+                        self.ca_cert_file.to_str().unwrap(),
+                    ],
+                    "installing certificate in keychain",
+                    self.dry_run,
+                )?;
+                Ok(())
+            }
+        }
+    }
+
     fn remove_agent(&self) -> SetupResult {
         let agent_file = &self.agent_file.to_str().unwrap();
         info("removing duwop agent configuration");
@@ -234,6 +292,27 @@ impl Setup {
             self.dry_run,
         )
     }
+
+    /// Checks wether we need to setup new CA. Should return an error _only_ if
+    /// there's an err processing the certificate, not if it's not valid.
+    fn ca_required(&self) -> Result<bool, Error> {
+        match ssl::load_ca_cert(self.ca_key_file.to_owned(), self.ca_cert_file.to_owned()) {
+            Ok((cert, _)) => {
+                if ssl::validate_ca(cert, 30).context("validating found certificate")? {
+                    debug!("found valid CA certificate");
+                    Ok(false)
+                } else {
+                    warn("Your TLS certificate is out of date or nearing it. We will replace it.");
+                    Ok(true)
+                }
+            }
+            Err(e) => {
+                debug!("failed loading CA");
+                trace!("error was: {}", e);
+                Ok(true)
+            }
+        }
+    }
 }
 
 impl IoOperation {
@@ -257,7 +336,17 @@ impl IoOperation {
                     std::fs::create_dir_all(&dir)
                 }
             }
-            IoOperation::WriteAllFile(file, content) => {
+            IoOperation::WriteFile(file, bytes) => {
+                if dry_run {
+                    tell(&format!("would create file: {:?}", &file));
+                    Ok(())
+                } else {
+                    debug!("creating file: {:?}", &file);
+                    let mut f = std::fs::File::create(&file)?;
+                    f.write(&bytes[..]).map(|_| ())
+                }
+            }
+            IoOperation::WriteStringToFile(file, content) => {
                 if dry_run {
                     tell(&format!("would create file: {:?}", &file));
                     Ok(())
@@ -335,12 +424,28 @@ fn tell(text: &str) {
     print(Paint::yellow("->"), text);
 }
 
+fn warn(text: &str) {
+    print(Paint::red("->"), text);
+}
+
 fn print(arrow: Paint<&str>, text: &str) {
     let initial = format!("{} ", arrow);
     let wrapper = textwrap::Wrapper::with_termwidth()
         .initial_indent(&initial)
         .subsequent_indent("   ");
     println!("{}", wrapper.fill(text));
+}
+
+fn find_keychain() -> Option<PathBuf> {
+    let old_keychain_path = in_home_dir("Library/Keychains/login.keychain");
+    let new_keychain_path = in_home_dir("Library/Keychains/login.keychain-db");
+    if new_keychain_path.exists() {
+        return Some(new_keychain_path);
+    }
+    if old_keychain_path.exists() {
+        return Some(old_keychain_path);
+    }
+    None
 }
 
 #[test]
