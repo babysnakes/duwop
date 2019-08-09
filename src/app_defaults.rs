@@ -71,23 +71,6 @@ lazy_static! {
     path.push("cert.pem");
     path
   };
-  static ref CERTS_DIR: PathBuf = {
-    let mut dir = DUWOP_DIR.clone();
-    dir.push("ssl");
-    dir
-  };
-  /// Default certificate file
-  pub static ref CERT_FILE: PathBuf = {
-    let mut file = CERTS_DIR.clone();
-    file.push("duwop.crt");
-    file
-  };
-  /// Default public key file.
-  pub static ref PRIV_KEY: PathBuf = {
-    let mut file = CERTS_DIR.clone();
-    file.push("duwop.key");
-    file
-  };
 }
 
 /// Construct a path in home directory _relative_ to home directory. THe provided

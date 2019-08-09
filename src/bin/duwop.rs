@@ -46,14 +46,6 @@ struct Cli {
     #[structopt(long = "mgmt-port", value_name = "PORT", env = "DUWOP_MANAGEMENT_PORT")]
     management_port: Option<u16>,
 
-    /// alternative certificate file
-    #[structopt(long = "cert", value_name = "FILE", env = "DUWOP_CERTIFICATE_FILE")]
-    certificate_file: Option<PathBuf>,
-
-    /// alternative private key
-    #[structopt(long = "private-key", value_name = "FILE", env = "DUWOP_PRIVATE_KEY")]
-    private_key: Option<PathBuf>,
-
     // development only, hidden
     #[structopt(long = "state-dir", hidden = true, env = "DUWOP_APP_STATE_DIR")]
     state_dir: Option<PathBuf>,
@@ -122,8 +114,6 @@ fn run(app: Cli) -> Result<(), Error> {
     let web_server_ssl = WebServer::new_https(
         app.https_port.unwrap_or(HTTPS_PORT),
         app.launchd,
-        app.certificate_file.unwrap_or_else(|| CERT_FILE.to_owned()),
-        app.private_key.unwrap_or_else(|| PRIV_KEY.to_owned()),
         Arc::clone(&locked),
     )?
     .run();

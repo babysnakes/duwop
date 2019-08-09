@@ -1,15 +1,11 @@
-#![allow(unused_imports)] // FIX remove this once done.
 use super::app_defaults::*;
 
-use std::fs::read;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use failure::{format_err, Error, ResultExt};
 use log::debug;
 use openssl::asn1::{Asn1Time, Asn1TimeRef};
 use openssl::bn::{BigNum, MsbOption};
-use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, PKeyRef, Private};
 use openssl::rsa::Rsa;
@@ -17,7 +13,7 @@ use openssl::x509::extension::{
     AuthorityKeyIdentifier, BasicConstraints, KeyUsage, SubjectAlternativeName,
     SubjectKeyIdentifier,
 };
-use openssl::x509::{X509NameBuilder, X509Ref, X509Req, X509ReqBuilder, X509VerifyResult, X509};
+use openssl::x509::{X509NameBuilder, X509Ref, X509Req, X509ReqBuilder, X509};
 
 /// Make a CA certificate and private key (taken from openssl example).
 pub fn mk_ca_cert() -> Result<(X509, PKey<Private>), Error> {
@@ -69,6 +65,7 @@ pub fn mk_ca_cert() -> Result<(X509, PKey<Private>), Error> {
 // Load CA certificate and key from files (actually, its good from any
 // certificate and key but in our context we only load CA keys).
 pub fn load_ca_cert(key_file: PathBuf, cert_file: PathBuf) -> Result<(X509, PKey<Private>), Error> {
+    debug!("loading key ({:?}) and cert ({:?})", &key_file, &cert_file);
     let key_bytes = std::fs::read(key_file)?;
     let key = PKey::private_key_from_pem(&key_bytes[..])?;
     let cert_bytes = std::fs::read(cert_file)?;
@@ -76,7 +73,89 @@ pub fn load_ca_cert(key_file: PathBuf, cert_file: PathBuf) -> Result<(X509, PKey
     Ok((cert, key))
 }
 
+/// Make a certificate and private key signed by the given CA cert and private key
+pub fn mk_ca_signed_cert(
+    ca_cert: &X509Ref,
+    ca_privkey: &PKeyRef<Private>,
+    dns_names_for_san: Vec<String>,
+) -> Result<(X509, PKey<Private>), Error> {
+    let rsa = Rsa::generate(2048)?;
+    let privkey = PKey::from_rsa(rsa)?;
+
+    let req = mk_request(&privkey).context("creating certificate request")?;
+
+    let mut cert_builder = X509::builder()?;
+    cert_builder.set_version(2)?;
+    let serial_number = {
+        let mut serial = BigNum::new()?;
+        serial.rand(159, MsbOption::MAYBE_ZERO, false)?;
+        serial.to_asn1_integer()?
+    };
+    cert_builder.set_serial_number(&serial_number)?;
+    cert_builder.set_subject_name(req.subject_name())?;
+    cert_builder.set_issuer_name(ca_cert.subject_name())?;
+    cert_builder.set_pubkey(&privkey)?;
+    let not_before = Asn1Time::days_from_now(0)?;
+    cert_builder.set_not_before(&not_before)?;
+    let not_after = Asn1Time::days_from_now(365)?;
+    cert_builder.set_not_after(&not_after)?;
+
+    cert_builder.append_extension(BasicConstraints::new().build()?)?;
+
+    cert_builder.append_extension(
+        KeyUsage::new()
+            .critical()
+            .non_repudiation()
+            .digital_signature()
+            .key_encipherment()
+            .build()?,
+    )?;
+
+    let subject_key_identifier =
+        SubjectKeyIdentifier::new().build(&cert_builder.x509v3_context(Some(ca_cert), None))?;
+    cert_builder.append_extension(subject_key_identifier)?;
+
+    let auth_key_identifier = AuthorityKeyIdentifier::new()
+        .keyid(false)
+        .issuer(false)
+        .build(&cert_builder.x509v3_context(Some(ca_cert), None))?;
+    cert_builder.append_extension(auth_key_identifier)?;
+
+    let subject_alt_name = {
+        let mut builder = SubjectAlternativeName::new();
+        for name in dns_names_for_san {
+            builder.dns(&format!("{}.test", &name));
+            builder.dns(&format!("*.{}.test", &name));
+        }
+        builder.build(&cert_builder.x509v3_context(Some(ca_cert), None))?
+    };
+    cert_builder.append_extension(subject_alt_name)?;
+
+    cert_builder.sign(&ca_privkey, MessageDigest::sha256())?;
+    let cert = cert_builder.build();
+
+    Ok((cert, privkey))
+}
+
 /// Verifies that the supplied certificate is not expired now or in the next
+/// Make a X509 request with the given private key
+fn mk_request(privkey: &PKey<Private>) -> Result<X509Req, Error> {
+    let mut req_builder = X509ReqBuilder::new()?;
+    req_builder.set_pubkey(&privkey)?;
+
+    let mut x509_name = X509NameBuilder::new()?;
+    x509_name.append_entry_by_text("C", TLS_ENTRY_C)?;
+    x509_name.append_entry_by_text("ST", TLS_ENTRY_ST)?;
+    x509_name.append_entry_by_text("O", TLS_ENTRY_O)?;
+    x509_name.append_entry_by_text("CN", TLS_ENTRY_CN)?;
+    let x509_name = x509_name.build();
+    req_builder.set_subject_name(&x509_name)?;
+
+    req_builder.sign(&privkey, MessageDigest::sha256())?;
+    let req = req_builder.build();
+    Ok(req)
+}
+
 /// `min_days` days.
 pub fn validate_ca(cert: X509, min_days: u32) -> Result<bool, Error> {
     // This proved to be much harder then it should. Took me a while to find a

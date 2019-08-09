@@ -2,7 +2,8 @@ mod errors;
 mod reverse_proxy;
 mod static_files;
 
-use super::app_defaults::{LAUNCHD_SOCKET, LAUNCHD_TLS_SOCKET};
+use super::app_defaults::*;
+use super::ssl;
 use super::state::{AppState, ServiceType};
 use errors::*;
 
@@ -16,7 +17,7 @@ use http::StatusCode;
 use hyper::header::HOST;
 use hyper::{self, Body, Request, Response};
 use log::{debug, error, info, trace};
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use openssl::ssl::{SslAcceptor, SslMethod};
 use tokio::net::TcpListener;
 use tokio_openssl::SslAcceptorExt;
 
@@ -64,11 +65,18 @@ impl Server {
     pub fn new_https(
         port: u16,
         launchd: bool,
-        cert: PathBuf,
-        priv_key: PathBuf,
         state: Arc<RwLock<AppState>>,
     ) -> Result<Self, Error> {
-        let acceptor = get_ssl_acceptor(cert, priv_key)?;
+        let keys = {
+            let unlocked = state.read().unwrap();
+            unlocked
+                .services
+                .keys()
+                .map(|x| x.to_owned())
+                .collect::<Vec<String>>()
+        };
+        let acceptor = get_ssl_acceptor(CA_CERT.to_owned(), CA_KEY.to_owned(), keys)
+            .context("generating ssl acceptor")?;
         let listener = if launchd {
             ServerListener::Launchd(LAUNCHD_TLS_SOCKET.to_string())
         } else {
@@ -272,12 +280,19 @@ fn get_activation_socket(socket_name: &str) -> Result<TcpListener, Error> {
 }
 
 /// Construct SslAcceptor from the provided certs and private key.
-fn get_ssl_acceptor(cert: PathBuf, priv_key: PathBuf) -> Result<SslAcceptor, Error> {
+fn get_ssl_acceptor(
+    cert: PathBuf,
+    priv_key: PathBuf,
+    names: Vec<String>,
+) -> Result<SslAcceptor, Error> {
+    debug!("creating work certificate");
+    let (ca_cert, ca_privkey) =
+        ssl::load_ca_cert(priv_key, cert).context("loading CA certificate")?;
+    let (tmp_cert, tmp_privkey) = ssl::mk_ca_signed_cert(&ca_cert, &ca_privkey, names)
+        .context("creating work certificate")?;
     let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
-    debug!("loading key file: {:?}", &priv_key);
-    acceptor.set_private_key_file(priv_key, SslFiletype::PEM)?;
-    debug!("loading certificate: {:?}", &cert);
-    acceptor.set_certificate_chain_file(cert)?;
+    acceptor.set_private_key(&tmp_privkey)?;
+    acceptor.set_certificate(&tmp_cert)?;
     acceptor.check_private_key()?;
     debug!("certificate valid :)");
     Ok(acceptor.build())
