@@ -9,7 +9,7 @@ license = "MIT"
 tokio = "0.1"
 tokio-fs = "0.1.6"
 tokio-io = "0.1.12"
-openssl = "0.10.24"
+openssl = { version = "0.10.24", features = ["vendored"] }
 openssl-sys = "0.9.48"
 foreign-types = "0.3.2" # match the version used by openssl
 tokio-openssl = "0.3.0"
