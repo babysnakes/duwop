@@ -163,6 +163,10 @@ enum CliSubCommand {
         /// don't actually perform the setup, just print what will be done
         #[structopt(long = "dry-run")]
         dry_run: bool,
+
+        /// disable TLS - service will ony serve through HTTP
+        #[structopt(long = "disable-tls")]
+        disable_tls: bool,
     },
 
     /// Remove system wide configurations (installed during setup).
@@ -223,7 +227,8 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::Setup {
             skip_agent,
             dry_run,
-        } => setup::Setup::new(dry_run).run(skip_agent),
+            disable_tls,
+        } => setup::Setup::new(dry_run).run(skip_agent, disable_tls),
         CliSubCommand::Remove { dry_run } => setup::Setup::new(dry_run).remove(),
     }
 }

@@ -51,16 +51,17 @@ impl Setup {
         }
     }
 
-    pub fn run(&self, skip_agent: bool) -> SetupResult {
+    pub fn run(&self, skip_agent: bool, disable_tls: bool) -> SetupResult {
         self.create_duwop_dirs()?;
         if skip_agent {
             info("skipping agent setup");
         } else {
-            self.install_gent()?;
+            self.install_gent(disable_tls)?;
         }
         self.install_resolve_file()?;
-        self.install_ca_cert()?;
-
+        if !disable_tls {
+            self.install_ca_cert()?;
+        }
         let bullet = format!("{} ", Paint::green("*"));
         let wrapper = textwrap::Wrapper::with_termwidth()
             .initial_indent(&bullet)
@@ -111,38 +112,11 @@ impl Setup {
         Ok(())
     }
 
-    fn install_gent(&self) -> SetupResult {
+    fn install_gent(&self, disable_tls: bool) -> SetupResult {
         info("installing launchd agent");
         let duwop_exe = find_duwop_exe()?;
-        let launchd_text = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>{agent}</string>
-    <key>ProgramArguments</key>
-    <array>
-      <string>{path}</string>
-      <string>--launchd</string>
-    </array>
-    <key>Sockets</key>
-    <dict>
-      <key>DuwopSocket</key>
-      <dict>
-        <key>SockNodeName</key>
-        <string>127.0.0.1</string>
-        <key>SockServiceName</key>
-        <string>80</string>
-      </dict>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-  </dict>
-</plist>
-"#, 
-            agent=AGENT_NAME,
-            path=duwop_exe,
-        );
+        let launchd_text = generate_launchd_template(&duwop_exe, disable_tls)
+            .context("generating launchd agent template")?;
         let agent_file = &self.agent_file.to_str().unwrap();
         let create_agents_dir = IoOperation::MkdirAll(self.launchd_agents_dir.to_owned());
         create_agents_dir
@@ -298,7 +272,9 @@ impl Setup {
     fn ca_required(&self) -> Result<bool, Error> {
         match ssl::load_ca_cert(self.ca_key_file.to_owned(), self.ca_cert_file.to_owned()) {
             Ok((cert, _)) => {
-                if ssl::validate_ca(cert, 30).context("validating found certificate")? {
+                if ssl::validate_ca(cert, CA_EXPIRED_GRACE)
+                    .context("validating found certificate")?
+                {
                     debug!("found valid CA certificate");
                     Ok(false)
                 } else {
@@ -416,6 +392,69 @@ fn find_duwop_exe() -> Result<String, Error> {
     }
 }
 
+fn generate_launchd_template(exe_path: &str, disable_tls: bool) -> Result<String, Error> {
+    use serde::Serialize;
+    use tinytemplate::TinyTemplate;
+    use trim_margin::MarginTrimmable;
+
+    #[derive(Serialize)]
+    struct Context<'a> {
+        agent_name: &'a str,
+        executable: &'a str,
+        socket_name: &'a str,
+        tls_socket_name: &'a str,
+        enable_tls: bool,
+    }
+    let context = Context {
+        agent_name: AGENT_NAME,
+        executable: exe_path,
+        socket_name: LAUNCHD_SOCKET,
+        tls_socket_name: LAUNCHD_TLS_SOCKET,
+        // it's kind of confusing but I prefer for the default to be enabled and
+        // pass argument for disabling. On the template though it's more clear
+        // if we enable it :)
+        enable_tls: !disable_tls,
+    };
+    let launchd_agent_template = r#"
+        |<?xml version="1.0" encoding="UTF-8"?>
+        |<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        |<plist version="1.0">
+        |<dict>
+        |    <key>Label</key>
+        |    <string>{agent_name}</string>
+        |    <key>ProgramArguments</key>
+        |    <array>
+        |    <string>{executable}</string>
+        |    <string>--launchd</string>{{if enable_tls }}{{ else }}
+        |    <string>--disable-tls</string>{{ endif }}
+        |    </array>
+        |    <key>Sockets</key>
+        |    <dict>
+        |    <key>{socket_name}</key>
+        |    <dict>
+        |        <key>SockNodeName</key>
+        |        <string>127.0.0.1</string>
+        |        <key>SockServiceName</key>
+        |        <string>80</string>
+        |    </dict>{{ if enable_tls }}
+        |    <key>{tls_socket_name}</key>
+        |    <dict>
+        |        <key>SockNodeName</key>
+        |        <string>127.0.0.1</string>
+        |        <key>SockServiceName</key>
+        |        <string>443</string>
+        |    </dict>{{ endif }}
+        |    </dict>
+        |    <key>RunAtLoad</key>
+        |    <true/>
+        |</dict>
+        |</plist>
+    "#.trim_margin().ok_or_else(|| format_err!("error rendering launchd template"))?;
+    let mut tt = TinyTemplate::new();
+    tt.add_template("main", &launchd_agent_template)?;
+    tt.render("main", &context).map_err(Error::from)
+}
+
 fn info(text: &str) {
     print(Paint::green("->"), text);
 }
@@ -448,43 +487,77 @@ fn find_keychain() -> Option<PathBuf> {
     None
 }
 
-#[test]
-fn run_command_errors_if_command_is_empty() {
-    let result = run_command(vec![], "message", true);
-    if let Err(err) = result {
-        assert!(err.to_string().contains("empty commands"));
-    } else {
-        panic!("empty command should return error");
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_command_errors_if_command_is_empty() {
+        let result = run_command(vec![], "message", true);
+        if let Err(err) = result {
+            assert!(err.to_string().contains("empty commands"));
+        } else {
+            panic!("empty command should return error");
+        }
     }
-}
 
-#[test]
-fn run_command_does_not_run_the_command_in_dry_run_mode() {
-    // in dry run mode this should not return error because it doesn't try to
-    // run the invalid command.
-    let result = run_command(vec!["/no/such/command"], "error", true);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn run_command_errors_on_invocation_error() {
-    let result = run_command(vec!["/no/such/command"], "error", false);
-    if let Err(err) = result {
-        assert!(err.to_string().contains("error invoking"));
-        assert!(err.to_string().contains("/no/such/command"));
-        assert!(err.to_string().contains("No such file"));
-    } else {
-        panic!("invalid command should return error");
+    #[test]
+    fn run_command_does_not_run_the_command_in_dry_run_mode() {
+        // in dry run mode this should not return error because it doesn't try to
+        // run the invalid command.
+        let result = run_command(vec!["/no/such/command"], "error", true);
+        assert!(result.is_ok());
     }
-}
 
-#[test]
-fn run_command_errors_if_command_fails() {
-    let result = run_command(vec!["ls", "/no/such/directory"], "error_message", false);
-    println!("{:#?}", result);
-    if let Err(err) = result {
-        assert!(err.to_string().contains("error_message"));
-    } else {
-        panic!("such command should not succeed");
+    #[test]
+    fn run_command_errors_on_invocation_error() {
+        let result = run_command(vec!["/no/such/command"], "error", false);
+        if let Err(err) = result {
+            assert!(err.to_string().contains("error invoking"));
+            assert!(err.to_string().contains("/no/such/command"));
+            assert!(err.to_string().contains("No such file"));
+        } else {
+            panic!("invalid command should return error");
+        }
+    }
+
+    #[test]
+    fn run_command_errors_if_command_fails() {
+        let result = run_command(vec!["ls", "/no/such/directory"], "error_message", false);
+        println!("{:#?}", result);
+        if let Err(err) = result {
+            assert!(err.to_string().contains("error_message"));
+        } else {
+            panic!("such command should not succeed");
+        }
+    }
+
+    #[test]
+    fn test_template_with_tls() {
+        let result = generate_launchd_template("/some/path", false).unwrap();
+        // println!("with tls: {}", result);
+        assert!(result.contains(AGENT_NAME), "failed agent name");
+        assert!(
+            result.contains(LAUNCHD_TLS_SOCKET),
+            "should contain tls socket name"
+        );
+        assert!(
+            !result.contains("--disable-tls"),
+            "should not contain disable tls flag"
+        );
+    }
+
+    #[test]
+    fn test_template_without_tls() {
+        let result = generate_launchd_template("/some/path", true).unwrap();
+        // println!("without tls: {}", result);
+        assert!(
+            !result.contains(LAUNCHD_TLS_SOCKET),
+            "should not contains tls socket deceleration"
+        );
+        assert!(
+            result.contains("--disable-tls"),
+            "should contain disable-tls flag"
+        );
     }
 }

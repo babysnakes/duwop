@@ -61,7 +61,11 @@ struct Cli {
     /// Enable launchd socket (for running on mac in port 80)
     #[structopt(long = "launchd", conflicts_with = "http-port")]
     launchd: bool,
-}
+
+    /// disable TLS - service will ony serve through HTTP
+    #[structopt(long = "disable-tls")]
+    disable_tls: bool,
+} // FIX disable tls
 
 fn main() {
     dotenv::dotenv().ok();
@@ -105,18 +109,24 @@ fn run(app: Cli) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(app.dns_port.unwrap_or(DNS_PORT))?;
+    // this is a hack until I completely rewrite initialization.
+    let mut service_to_spawn = vec![];
     let web_server = WebServer::new_http(
         app.http_port.unwrap_or(HTTP_PORT),
         app.launchd,
         Arc::clone(&locked),
     )?
     .run();
-    let web_server_ssl = WebServer::new_https(
-        app.https_port.unwrap_or(HTTPS_PORT),
-        app.launchd,
-        Arc::clone(&locked),
-    )?
-    .run();
+    service_to_spawn.push(web_server);
+    if !app.disable_tls {
+        let web_server_ssl = WebServer::new_https(
+            app.https_port.unwrap_or(HTTPS_PORT),
+            app.launchd,
+            Arc::clone(&locked),
+        )?
+        .run();
+        service_to_spawn.push(web_server_ssl);
+    }
     let management_server = ManagementServer::new(
         app.management_port.unwrap_or(MANAGEMENT_PORT),
         Arc::clone(&locked),
@@ -124,13 +134,14 @@ fn run(app: Cli) -> Result<(), Error> {
         log_level,
     )
     .run();
+    service_to_spawn.push(management_server);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
             error!("DNS Server error: {:?}", err);
         }));
-        tokio::spawn(web_server);
-        tokio::spawn(web_server_ssl);
-        tokio::spawn(management_server);
+        for service in service_to_spawn {
+            tokio::spawn(service);
+        }
         Ok(())
     }));
     Ok(())

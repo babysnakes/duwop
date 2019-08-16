@@ -22,6 +22,8 @@ pub const TLS_ENTRY_ST: &str = "Israel";
 pub const TLS_ENTRY_O: &str = "Duwop IO";
 pub const TLS_ENTRY_CN: &str = "Duwop Test";
 
+pub const CA_EXPIRED_GRACE: u32 = 30;
+
 lazy_static! {
   /// Home directory
   pub static ref HOME_DIR: PathBuf = dirs::home_dir().expect("Couldn't extract home directory");
