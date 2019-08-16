@@ -123,9 +123,13 @@ pub fn mk_ca_signed_cert(
 
     let subject_alt_name = {
         let mut builder = SubjectAlternativeName::new();
-        for name in dns_names_for_san {
-            builder.dns(&format!("{}.test", &name));
-            builder.dns(&format!("*.{}.test", &name));
+        if dns_names_for_san.is_empty() {
+            builder.dns("duwop.test");
+        } else {
+            for name in dns_names_for_san {
+                builder.dns(&format!("{}.test", &name));
+                builder.dns(&format!("*.{}.test", &name));
+            }
         }
         builder.build(&cert_builder.x509v3_context(Some(ca_cert), None))?
     };
@@ -188,5 +192,33 @@ pub fn validate_ca(cert: X509, min_days: u32) -> Result<bool, Error> {
         Ok(false)
     } else {
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mk_ca_signed_cert_with_empty_san() {
+        let (cert, key) = mk_ca_cert().unwrap();
+        let (cert, _key) = mk_ca_signed_cert(&cert, &key, vec![]).unwrap();
+        assert_eq!(
+            cert.subject_alt_names()
+                .unwrap()
+                .get(0)
+                .unwrap()
+                .dnsname()
+                .unwrap(),
+            "duwop.test"
+        );
+    }
+
+    #[test]
+    fn test_mk_ca_signed_cert_with_names() {
+        let (cert, key) = mk_ca_cert().unwrap();
+        let (cert, _key) =
+            mk_ca_signed_cert(&cert, &key, vec!["hello".into(), "world".into()]).unwrap();
+        assert_eq!(cert.subject_alt_names().unwrap().len(), 4);
     }
 }
