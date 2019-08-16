@@ -38,7 +38,7 @@ pub fn mk_ca_cert() -> Result<(X509, PKey<Private>), Error> {
     cert_builder.set_subject_name(&x509_name)?;
     cert_builder.set_issuer_name(&x509_name)?;
     cert_builder.set_pubkey(&privkey)?;
-    let not_before = Asn1Time::days_from_now(100)?;
+    let not_before = Asn1Time::days_from_now(0)?;
     cert_builder.set_not_before(&not_before)?;
     let not_after = Asn1Time::days_from_now(365)?;
     cert_builder.set_not_after(&not_after)?;
