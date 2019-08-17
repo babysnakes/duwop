@@ -7,7 +7,7 @@ pub const HTTPS_PORT: u16 = 443;
 pub const MANAGEMENT_PORT: u16 = 9054;
 pub const LOG_LEVEL: &str = "duwop=info";
 /// The name of the launchd agent
-pub const AGENT_NAME: &str = "org.babysnakes.duwop";
+pub const AGENT_NAME: &str = "io.duwop";
 /// on macos, the directory that contains custom resolver files
 pub const RESOLVER_DIR: &str = "/etc/resolver/";
 /// We only use ".test" domain.
@@ -42,7 +42,7 @@ lazy_static! {
   /// Default state directory
   pub static ref STATE_DIR: PathBuf = {
     let mut dir = DUWOP_DIR.clone();
-    dir.push(".state");
+    dir.push("state");
     dir
   };
   /// User's launchd directory.
