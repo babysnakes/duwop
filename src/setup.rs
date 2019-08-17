@@ -72,6 +72,12 @@ impl Setup {
             "{}",
             wrapper.fill("run 'duwopctl doctor' to check service, setup and db health")
         );
+        if !disable_tls {
+            println!(
+                "{}",
+                wrapper.fill("learn how to configure your mac to trust your self-signed certificate: https://git.io/fjd6Z")
+            );
+        }
         println!(
             "{}",
             wrapper.fill("use 'duwopctl completion ...' to generate shell completion")
@@ -203,28 +209,7 @@ impl Setup {
         save_cert
             .perform(self.dry_run)
             .context("saving CA certificate")?;
-        info("Adding the newly created certificate to your keychain - so your browsers will trust it");
-        tell("You might be prompted to approve installing the created CA as a trusted certificate in your keychain");
-        match find_keychain() {
-            None => Err(format_err!("couldn't find any keychain file")),
-            Some(keychain) => {
-                run_command(
-                    vec![
-                        "security",
-                        "add-trusted-cert",
-                        "-d",
-                        "-r",
-                        "trustRoot",
-                        "-k",
-                        keychain.to_str().unwrap(),
-                        self.ca_cert_file.to_str().unwrap(),
-                    ],
-                    "installing certificate in keychain",
-                    self.dry_run,
-                )?;
-                Ok(())
-            }
-        }
+        Ok(())
     }
 
     fn remove_agent(&self) -> SetupResult {
@@ -473,18 +458,6 @@ fn print(arrow: Paint<&str>, text: &str) {
         .initial_indent(&initial)
         .subsequent_indent("   ");
     println!("{}", wrapper.fill(text));
-}
-
-fn find_keychain() -> Option<PathBuf> {
-    let old_keychain_path = in_home_dir("Library/Keychains/login.keychain");
-    let new_keychain_path = in_home_dir("Library/Keychains/login.keychain-db");
-    if new_keychain_path.exists() {
-        return Some(new_keychain_path);
-    }
-    if old_keychain_path.exists() {
-        return Some(old_keychain_path);
-    }
-    None
 }
 
 #[cfg(test)]
