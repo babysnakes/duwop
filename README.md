@@ -26,13 +26,13 @@ Check [here](#Project-status) for project status.
 
 ### Setup Instructions
 
-The project is in early stages so the setup script might have bugs, Please
-report setup bugs.
+The project is in beta state. Please report any setup (and other) bugs.
 
 *Note:* You have to be admin on your computer in order to run setup.
 
 #### From binary release
-* Obtain the latest binary release from the repository's releases page.
+* Obtain the [latest binary][latest] release from the repository's releases
+  page.
 * Open the archive (`tar xzf duwop-bin-...` or double click it).
 * Step into the generated `duwop` directory and run: `./install.sh`.
 * Follow the on-screen instructions.
@@ -52,17 +52,27 @@ Enjoy
 >bugs.
 
 **Missing Features**
-* Docker serving is not yet implemented. It's possible to implement it
-    manually in terms of reverse proxy.
-* SSL support not implemented yet.
 
-**Enhancements**:
+* Docker serving is not yet implemented. It's possible to implement it manually
+  in terms of reverse proxy.
+
+**Planned Enhancements**:
+
 * Serving directories:
   * Directory listing are not supported. If no `index.html` file in the
     directory 404 is returned - low priority.
 * Reverse proxy:
   * Possibly allow to proxy web servers that are running on other internal ports
     (e.g. in VMware etc) - very low priority.
+* SSL Support:
+  * We are generating certificates only for the configured services and their
+    subdomains (this is the only way it can work as far as I know - details are
+    in the [certificates page][certs]). Because of that, newly created services
+    are not supported until the service is reloaded (reloading instructions are
+    [here][reloading]). This is high priority fix.
+  * Trusting self signed certificates is a moving target. Currently configuring
+    this trust is a manual step (documented [here][trust-cert]). We're trying to
+    find a way to automate this.
 
 ### Development environment setup
 
@@ -75,7 +85,7 @@ Enjoy
   environment variable) to make sure your editing the development state
   directory. If you have setup your `.env` file correctly (previous bullet) and
   you are running from within the repository root you don't have to do anything,
-  the development `devdata` directory is enabbled automatically.
+  the development `devdata` directory is enabled automatically.
 * Do not use `--log-to-file` option as the log directory is hard-coded.
 
 ### Contributors
@@ -94,6 +104,23 @@ Enjoy
 * Proxy configuration has changed from `proxy:http://hostname:port/` to
   `proxy:hostname:post`. No auto conversion.
 
+#### 0.4.0-beta1
+* Agent name (and file name) changed from `org.babysnakes.duwop...` to
+  `io.duwop...`. In the highly unlikely event that you have installed this
+  before *0.4.0-beta1*, you'll have to manually stop and delete agent file for
+  the new version to run:
+```bash
+# if you still have the old version installed run:
+duwopctl remove
+# otherwise perform it manually
+launchctl unload ~/Library/LaunchAgents/org.babysnakes.duwop.plist
+rm ~/Library/LaunchAgents/org.babysnakes.duwop.plist
+```
+
+[latest]: https://github.com/babysnakes/duwop/releases/latest
+[trust-cert]: https://git.io/fjd6Z
+[certs]: https://github.com/babysnakes/duwop/wiki/Certificates
+[reloading]: https://github.com/babysnakes/duwop/wiki/Certificates#reloading-the-service-to-generate-certificates-for-new-services
 [pd]: https://github.com/puma/puma-dev
 [emil]: https://github.com/EmilHernvall
 [dnsguide]: https://github.com/EmilHernvall/dnsguide

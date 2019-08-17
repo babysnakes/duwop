@@ -1,12 +1,12 @@
 use super::app_defaults::*;
+use super::ssl;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use dirs;
 use failure::{format_err, Error, ResultExt};
-use log::debug;
+use log::{debug, trace};
 use yansi::Paint;
 
 type SetupResult = Result<(), Error>;
@@ -19,47 +19,49 @@ pub struct Setup {
     agent_file: PathBuf,
     resolver_directory: String,
     resolver_file: String,
+    ca_dir: PathBuf,
+    ca_key_file: PathBuf,
+    ca_cert_file: PathBuf,
 }
 
 enum IoOperation {
+    /// Create directory with all required parent dirs.
     MkdirAll(PathBuf),
+    /// Delete a path (like `unlink`).
     RemoveFile(PathBuf),
-    WriteAllFile(PathBuf, String),
+    /// Create file with provided bytes.
+    WriteFile(PathBuf, Vec<u8>),
+    /// Create file with provided string.
+    WriteStringToFile(PathBuf, String),
 }
 
 impl Setup {
     pub fn new(dry_run: bool) -> Self {
-        let home_dir = dirs::home_dir().expect("couldn't infer home directory!");
-        let mut state_dir = home_dir.clone();
-        state_dir.push(STATE_DIR_RELATIVE);
-        let mut log_dir = home_dir.clone();
-        log_dir.push(LOG_DIR);
-        let mut launchd_agents_dir = home_dir.clone();
-        launchd_agents_dir.push(&LAUNCH_AGENTS_DIR);
-        let launchd_filename = format!("{}.plist", &AGENT_NAME);
-        let mut agent_file = launchd_agents_dir.clone();
-        agent_file.push(&launchd_filename);
-
         Setup {
             dry_run,
-            state_dir,
-            log_dir,
-            launchd_agents_dir,
-            agent_file,
+            state_dir: STATE_DIR.to_owned(),
+            log_dir: LOG_DIR.to_owned(),
+            launchd_agents_dir: USER_LAUNCHD_DIR.to_owned(),
+            agent_file: LAUNCHD_AGENT_FILE.to_owned(),
             resolver_directory: RESOLVER_DIR.to_owned(),
             resolver_file: format!("{}{}", &RESOLVER_DIR, RESOLVER_FILE),
+            ca_dir: CA_DIR.to_owned(),
+            ca_key_file: CA_KEY.to_owned(),
+            ca_cert_file: CA_CERT.to_owned(),
         }
     }
 
-    pub fn run(&self, skip_agent: bool) -> SetupResult {
+    pub fn run(&self, skip_agent: bool, disable_tls: bool) -> SetupResult {
         self.create_duwop_dirs()?;
         if skip_agent {
             info("skipping agent setup");
         } else {
-            self.install_gent()?;
+            self.install_gent(disable_tls)?;
         }
         self.install_resolve_file()?;
-
+        if !disable_tls {
+            self.install_ca_cert()?;
+        }
         let bullet = format!("{} ", Paint::green("*"));
         let wrapper = textwrap::Wrapper::with_termwidth()
             .initial_indent(&bullet)
@@ -70,6 +72,12 @@ impl Setup {
             "{}",
             wrapper.fill("run 'duwopctl doctor' to check service, setup and db health")
         );
+        if !disable_tls {
+            println!(
+                "{}",
+                wrapper.fill("learn how to configure your mac to trust your self-signed certificate: https://git.io/fjd6Z")
+            );
+        }
         println!(
             "{}",
             wrapper.fill("use 'duwopctl completion ...' to generate shell completion")
@@ -110,38 +118,11 @@ impl Setup {
         Ok(())
     }
 
-    fn install_gent(&self) -> SetupResult {
+    fn install_gent(&self, disable_tls: bool) -> SetupResult {
         info("installing launchd agent");
         let duwop_exe = find_duwop_exe()?;
-        let launchd_text = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>{agent}</string>
-    <key>ProgramArguments</key>
-    <array>
-      <string>{path}</string>
-      <string>--launchd</string>
-    </array>
-    <key>Sockets</key>
-    <dict>
-      <key>DuwopSocket</key>
-      <dict>
-        <key>SockNodeName</key>
-        <string>127.0.0.1</string>
-        <key>SockServiceName</key>
-        <string>80</string>
-      </dict>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-  </dict>
-</plist>
-"#, 
-            agent=AGENT_NAME,
-            path=duwop_exe,
-        );
+        let launchd_text = generate_launchd_template(&duwop_exe, disable_tls)
+            .context("generating launchd agent template")?;
         let agent_file = &self.agent_file.to_str().unwrap();
         let create_agents_dir = IoOperation::MkdirAll(self.launchd_agents_dir.to_owned());
         create_agents_dir
@@ -152,7 +133,8 @@ impl Setup {
             // we can safely ignore this command
             let _ = run_command(vec!["launchctl", "unload", agent_file], "", self.dry_run);
         }
-        let create_agent_file = IoOperation::WriteAllFile(self.agent_file.clone(), launchd_text);
+        let create_agent_file =
+            IoOperation::WriteStringToFile(self.agent_file.clone(), launchd_text);
         create_agent_file
             .perform(self.dry_run)
             .context("creating launchd agent file")?;
@@ -207,6 +189,29 @@ impl Setup {
         Ok(())
     }
 
+    fn install_ca_cert(&self) -> SetupResult {
+        if !self.ca_required().context("checking for valid CA")? {
+            info("valid CA already exists");
+            return Ok(());
+        }
+
+        info("creating a new SSL root certificate");
+        debug!("creating new Ca private key and certificate");
+        let (cert, key) = ssl::mk_ca_cert()?;
+        let required_dir = IoOperation::MkdirAll(self.ca_dir.to_owned());
+        let save_key =
+            IoOperation::WriteFile(self.ca_key_file.to_owned(), key.private_key_to_pem_pkcs8()?);
+        let save_cert = IoOperation::WriteFile(self.ca_cert_file.to_owned(), cert.to_pem()?);
+        required_dir.perform(self.dry_run)?;
+        save_key
+            .perform(self.dry_run)
+            .context("saving CA private key")?;
+        save_cert
+            .perform(self.dry_run)
+            .context("saving CA certificate")?;
+        Ok(())
+    }
+
     fn remove_agent(&self) -> SetupResult {
         let agent_file = &self.agent_file.to_str().unwrap();
         info("removing duwop agent configuration");
@@ -246,6 +251,29 @@ impl Setup {
             self.dry_run,
         )
     }
+
+    /// Checks wether we need to setup new CA. Should return an error _only_ if
+    /// there's an err processing the certificate, not if it's not valid.
+    fn ca_required(&self) -> Result<bool, Error> {
+        match ssl::load_ca_cert(self.ca_key_file.to_owned(), self.ca_cert_file.to_owned()) {
+            Ok((cert, _)) => {
+                if ssl::validate_ca(cert, CA_EXPIRED_GRACE)
+                    .context("validating found certificate")?
+                {
+                    debug!("found valid CA certificate");
+                    Ok(false)
+                } else {
+                    warn("Your TLS certificate is out of date or nearing it. We will replace it.");
+                    Ok(true)
+                }
+            }
+            Err(e) => {
+                debug!("failed loading CA");
+                trace!("error was: {}", e);
+                Ok(true)
+            }
+        }
+    }
 }
 
 impl IoOperation {
@@ -269,7 +297,17 @@ impl IoOperation {
                     std::fs::create_dir_all(&dir)
                 }
             }
-            IoOperation::WriteAllFile(file, content) => {
+            IoOperation::WriteFile(file, bytes) => {
+                if dry_run {
+                    tell(&format!("would create file: {:?}", &file));
+                    Ok(())
+                } else {
+                    debug!("creating file: {:?}", &file);
+                    let mut f = std::fs::File::create(&file)?;
+                    f.write(&bytes[..]).map(|_| ())
+                }
+            }
+            IoOperation::WriteStringToFile(file, content) => {
                 if dry_run {
                     tell(&format!("would create file: {:?}", &file));
                     Ok(())
@@ -339,12 +377,79 @@ fn find_duwop_exe() -> Result<String, Error> {
     }
 }
 
+fn generate_launchd_template(exe_path: &str, disable_tls: bool) -> Result<String, Error> {
+    use serde::Serialize;
+    use tinytemplate::TinyTemplate;
+    use trim_margin::MarginTrimmable;
+
+    #[derive(Serialize)]
+    struct Context<'a> {
+        agent_name: &'a str,
+        executable: &'a str,
+        socket_name: &'a str,
+        tls_socket_name: &'a str,
+        enable_tls: bool,
+    }
+    let context = Context {
+        agent_name: AGENT_NAME,
+        executable: exe_path,
+        socket_name: LAUNCHD_SOCKET,
+        tls_socket_name: LAUNCHD_TLS_SOCKET,
+        // it's kind of confusing but I prefer for the default to be enabled and
+        // pass argument for disabling. On the template though it's more clear
+        // if we enable it :)
+        enable_tls: !disable_tls,
+    };
+    let launchd_agent_template = r#"
+        |<?xml version="1.0" encoding="UTF-8"?>
+        |<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        |<plist version="1.0">
+        |<dict>
+        |    <key>Label</key>
+        |    <string>{agent_name}</string>
+        |    <key>ProgramArguments</key>
+        |    <array>
+        |    <string>{executable}</string>
+        |    <string>--launchd</string>{{if enable_tls }}{{ else }}
+        |    <string>--disable-tls</string>{{ endif }}
+        |    </array>
+        |    <key>Sockets</key>
+        |    <dict>
+        |    <key>{socket_name}</key>
+        |    <dict>
+        |        <key>SockNodeName</key>
+        |        <string>127.0.0.1</string>
+        |        <key>SockServiceName</key>
+        |        <string>80</string>
+        |    </dict>{{ if enable_tls }}
+        |    <key>{tls_socket_name}</key>
+        |    <dict>
+        |        <key>SockNodeName</key>
+        |        <string>127.0.0.1</string>
+        |        <key>SockServiceName</key>
+        |        <string>443</string>
+        |    </dict>{{ endif }}
+        |    </dict>
+        |    <key>RunAtLoad</key>
+        |    <true/>
+        |</dict>
+        |</plist>
+    "#.trim_margin().ok_or_else(|| format_err!("error rendering launchd template"))?;
+    let mut tt = TinyTemplate::new();
+    tt.add_template("main", &launchd_agent_template)?;
+    tt.render("main", &context).map_err(Error::from)
+}
+
 fn info(text: &str) {
     print(Paint::green("->"), text);
 }
 
 fn tell(text: &str) {
     print(Paint::yellow("->"), text);
+}
+
+fn warn(text: &str) {
+    print(Paint::red("->"), text);
 }
 
 fn print(arrow: Paint<&str>, text: &str) {
@@ -355,43 +460,77 @@ fn print(arrow: Paint<&str>, text: &str) {
     println!("{}", wrapper.fill(text));
 }
 
-#[test]
-fn run_command_errors_if_command_is_empty() {
-    let result = run_command(vec![], "message", true);
-    if let Err(err) = result {
-        assert!(err.to_string().contains("empty commands"));
-    } else {
-        panic!("empty command should return error");
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_command_errors_if_command_is_empty() {
+        let result = run_command(vec![], "message", true);
+        if let Err(err) = result {
+            assert!(err.to_string().contains("empty commands"));
+        } else {
+            panic!("empty command should return error");
+        }
     }
-}
 
-#[test]
-fn run_command_does_not_run_the_command_in_dry_run_mode() {
-    // in dry run mode this should not return error because it doesn't try to
-    // run the invalid command.
-    let result = run_command(vec!["/no/such/command"], "error", true);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn run_command_errors_on_invocation_error() {
-    let result = run_command(vec!["/no/such/command"], "error", false);
-    if let Err(err) = result {
-        assert!(err.to_string().contains("error invoking"));
-        assert!(err.to_string().contains("/no/such/command"));
-        assert!(err.to_string().contains("No such file"));
-    } else {
-        panic!("invalid command should return error");
+    #[test]
+    fn run_command_does_not_run_the_command_in_dry_run_mode() {
+        // in dry run mode this should not return error because it doesn't try to
+        // run the invalid command.
+        let result = run_command(vec!["/no/such/command"], "error", true);
+        assert!(result.is_ok());
     }
-}
 
-#[test]
-fn run_command_errors_if_command_fails() {
-    let result = run_command(vec!["ls", "/no/such/directory"], "error_message", false);
-    println!("{:#?}", result);
-    if let Err(err) = result {
-        assert!(err.to_string().contains("error_message"));
-    } else {
-        panic!("such command should not succeed");
+    #[test]
+    fn run_command_errors_on_invocation_error() {
+        let result = run_command(vec!["/no/such/command"], "error", false);
+        if let Err(err) = result {
+            assert!(err.to_string().contains("error invoking"));
+            assert!(err.to_string().contains("/no/such/command"));
+            assert!(err.to_string().contains("No such file"));
+        } else {
+            panic!("invalid command should return error");
+        }
+    }
+
+    #[test]
+    fn run_command_errors_if_command_fails() {
+        let result = run_command(vec!["ls", "/no/such/directory"], "error_message", false);
+        println!("{:#?}", result);
+        if let Err(err) = result {
+            assert!(err.to_string().contains("error_message"));
+        } else {
+            panic!("such command should not succeed");
+        }
+    }
+
+    #[test]
+    fn test_template_with_tls() {
+        let result = generate_launchd_template("/some/path", false).unwrap();
+        // println!("with tls: {}", result);
+        assert!(result.contains(AGENT_NAME), "failed agent name");
+        assert!(
+            result.contains(LAUNCHD_TLS_SOCKET),
+            "should contain tls socket name"
+        );
+        assert!(
+            !result.contains("--disable-tls"),
+            "should not contain disable tls flag"
+        );
+    }
+
+    #[test]
+    fn test_template_without_tls() {
+        let result = generate_launchd_template("/some/path", true).unwrap();
+        // println!("without tls: {}", result);
+        assert!(
+            !result.contains(LAUNCHD_TLS_SOCKET),
+            "should not contains tls socket deceleration"
+        );
+        assert!(
+            result.contains("--disable-tls"),
+            "should contain disable-tls flag"
+        );
     }
 }

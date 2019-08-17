@@ -115,7 +115,7 @@ enum CliSubCommand {
     },
 
     /// List available services.
-    /// 
+    ///
     /// Also displays service mis-configurations.
     #[structopt(name = "list", author = "")]
     List,
@@ -163,6 +163,10 @@ enum CliSubCommand {
         /// don't actually perform the setup, just print what will be done
         #[structopt(long = "dry-run")]
         dry_run: bool,
+
+        /// disable TLS - service will ony serve through HTTP
+        #[structopt(long = "disable-tls")]
+        disable_tls: bool,
     },
 
     /// Remove system wide configurations (installed during setup).
@@ -207,7 +211,7 @@ fn main() {
 fn run(app: Cli) -> Result<(), Error> {
     debug!("running with options: {:#?}", app);
     let mgmt_port = app.mgmt_port.unwrap_or(MANAGEMENT_PORT);
-    let state_dir = app.state_dir.unwrap_or_else(state_dir);
+    let state_dir = app.state_dir.unwrap_or_else(|| STATE_DIR.to_owned());
     let duwop_client = DuwopClient::new(mgmt_port, state_dir);
     match app.command {
         CliSubCommand::Reload => duwop_client.reload_server_configuration(),
@@ -223,7 +227,8 @@ fn run(app: Cli) -> Result<(), Error> {
         CliSubCommand::Setup {
             skip_agent,
             dry_run,
-        } => setup::Setup::new(dry_run).run(skip_agent),
+            disable_tls,
+        } => setup::Setup::new(dry_run).run(skip_agent, disable_tls),
         CliSubCommand::Remove { dry_run } => setup::Setup::new(dry_run).remove(),
     }
 }

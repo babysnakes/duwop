@@ -2,7 +2,8 @@ mod errors;
 mod reverse_proxy;
 mod static_files;
 
-use super::app_defaults::LAUNCHD_SOCKET;
+use super::app_defaults::*;
+use super::ssl;
 use super::state::{AppState, ServiceType};
 use errors::*;
 
@@ -16,7 +17,9 @@ use http::StatusCode;
 use hyper::header::HOST;
 use hyper::{self, Body, Request, Response};
 use log::{debug, error, info, trace};
+use openssl::ssl::{SslAcceptor, SslMethod};
 use tokio::net::TcpListener;
+use tokio_openssl::SslAcceptorExt;
 
 type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
 
@@ -32,65 +35,129 @@ struct MainService {
     remote_addr: SocketAddr,
 }
 
-pub struct Server {
-    listener: ServerListener,
-    state: Arc<RwLock<AppState>>,
+pub enum Server {
+    Http {
+        listener: ServerListener,
+        state: Arc<RwLock<AppState>>,
+    },
+    Https {
+        listener: ServerListener,
+        state: Arc<RwLock<AppState>>,
+        acceptor: SslAcceptor,
+    },
 }
 
-enum ServerListener {
+pub enum ServerListener {
     TcpListener(SocketAddr),
-    Launchd,
+    Launchd(String),
 }
 
 impl Server {
-    pub fn new(port: u16, launchd: bool, state: Arc<RwLock<AppState>>) -> Self {
+    pub fn new_http(port: u16, launchd: bool, state: Arc<RwLock<AppState>>) -> Result<Self, Error> {
         let listener = if launchd {
-            ServerListener::Launchd
+            ServerListener::Launchd(LAUNCHD_SOCKET.to_string())
         } else {
             ServerListener::TcpListener((Ipv4Addr::LOCALHOST, port).into())
         };
-        Server {
-            listener,
-            state: Arc::clone(&state),
-        }
+        Ok(Server::Http { listener, state })
     }
 
-    /// We can not launch hyper the default way because we might not have a
-    /// socket to bind to (e.g. in case we use launchd).
-    pub fn run(self) -> Box<impl Future<Item = (), Error = ()> + Send> {
+    pub fn new_https(
+        port: u16,
+        launchd: bool,
+        state: Arc<RwLock<AppState>>,
+    ) -> Result<Self, Error> {
+        let keys = {
+            let unlocked = state.read().unwrap();
+            unlocked
+                .services
+                .keys()
+                .map(|x| x.to_owned())
+                .collect::<Vec<String>>()
+        };
+        let acceptor = get_ssl_acceptor(CA_CERT.to_owned(), CA_KEY.to_owned(), keys)
+            .context("generating ssl acceptor")?;
+        let listener = if launchd {
+            ServerListener::Launchd(LAUNCHD_TLS_SOCKET.to_string())
+        } else {
+            ServerListener::TcpListener((Ipv4Addr::LOCALHOST, port).into())
+        };
+        Ok(Server::Https {
+            listener,
+            state,
+            acceptor,
+        })
+    }
+
+    /// Run the server
+    pub fn run(self) -> Box<Future<Item = (), Error = ()> + Send> {
+        // We can not launch hyper the default way because we might not have a
+        // socket to bind to (e.g. in case we use launchd).
         use futures::stream::Stream;
         use hyper::server::conn::Http;
 
-        let listener = self.listener.to_listener().unwrap();
-        let http = Http::new();
-        Box::new(
-            listener
-                .incoming()
-                .map_err(|e| error!("{:?}", e))
-                .for_each(move |socket| {
-                    let source_address = socket.peer_addr().unwrap();
-                    let service = MainService {
-                        state: Arc::clone(&self.state),
-                        remote_addr: source_address,
-                    };
-                    tokio::spawn(
-                        http.serve_connection(socket, service)
-                            .map_err(|e| error!("{:?}", e)),
-                    )
-                }),
-        )
+        match self {
+            Server::Http { listener, state } => {
+                let listener = listener.to_listener().unwrap();
+                let http = Http::new();
+                let state = Arc::clone(&state);
+                Box::new(listener.incoming().map_err(|e| error!("{:?}", e)).for_each(
+                    move |socket| {
+                        let source_address = socket.peer_addr().unwrap();
+                        let service = MainService {
+                            state: Arc::clone(&state),
+                            remote_addr: source_address,
+                        };
+                        tokio::spawn(
+                            http.serve_connection(socket, service)
+                                .map_err(|e| error!("{:?}", e)),
+                        )
+                    },
+                ))
+            }
+            Server::Https {
+                listener,
+                state,
+                acceptor,
+            } => {
+                let listener = listener.to_listener().unwrap();
+                let state = Arc::clone(&state);
+                let acceptor = acceptor.clone();
+                let done =
+                    listener
+                        .incoming()
+                        .map_err(|e| error!("{:?}", e))
+                        .for_each(move |stream| {
+                            let addr = stream.peer_addr().unwrap();
+                            let state_clone = Arc::clone(&state);
+                            let http = Http::new();
+                            let done = acceptor
+                                .accept_async(stream)
+                                .map_err(|e| error!("{:?}", e))
+                                .and_then(move |stream| {
+                                    let service = MainService {
+                                        state: state_clone,
+                                        remote_addr: addr,
+                                    };
+                                    let done = http
+                                        .serve_connection(stream, service)
+                                        .map_err(|e| error!("{:?}", e));
+                                    tokio::spawn(done)
+                                });
+                            tokio::spawn(done)
+                        });
+                Box::new(done)
+            }
+        }
     }
 }
 
 impl ServerListener {
     fn to_listener(&self) -> Result<TcpListener, Error> {
         match self {
-            ServerListener::Launchd => {
-                info!(
-                    "listening for web requests on launchd socket: {}",
-                    LAUNCHD_SOCKET
-                );
-                get_activation_socket(LAUNCHD_SOCKET)
+            ServerListener::Launchd(name) => {
+                info!("listening for web requests on launchd socket: {}", name);
+                get_activation_socket(name)
             }
             ServerListener::TcpListener(addr) => {
                 info!("listening for web requests on {}", &addr);
@@ -210,6 +277,25 @@ fn get_activation_socket(socket_name: &str) -> Result<TcpListener, Error> {
             )),
         }
     }
+}
+
+/// Construct SslAcceptor from the provided certs and private key.
+fn get_ssl_acceptor(
+    cert: PathBuf,
+    priv_key: PathBuf,
+    names: Vec<String>,
+) -> Result<SslAcceptor, Error> {
+    debug!("creating work certificate");
+    let (ca_cert, ca_privkey) =
+        ssl::load_ca_cert(priv_key, cert).context("loading CA certificate")?;
+    let (tmp_cert, tmp_privkey) = ssl::mk_ca_signed_cert(&ca_cert, &ca_privkey, names)
+        .context("creating work certificate")?;
+    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
+    acceptor.set_private_key(&tmp_privkey)?;
+    acceptor.set_certificate(&tmp_cert)?;
+    acceptor.check_private_key()?;
+    debug!("certificate valid :)");
+    Ok(acceptor.build())
 }
 
 // While it's not currently intended to be supported on other platforms, one

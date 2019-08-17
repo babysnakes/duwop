@@ -4,3 +4,5 @@
 *.bak
 /.env
 /devdata/
+/devssl/
+/todo.md
