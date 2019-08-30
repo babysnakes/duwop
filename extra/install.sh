@@ -4,6 +4,7 @@
 # the same folder as `duwop` and `duwopctl`.
 
 BOLD='\033[1m'
+RED='\033[31m'
 GREEN='\033[32m'
 NC='\033[0m' # No Color
 
@@ -17,9 +18,14 @@ for bin in duwop duwopctl uninstall.sh; do
   install ${source_dir}/$bin ${target_dir}/
 done
 
-echo "Please specify a directory in your path to link duwopctl to"
+echo "Please specify a directory in your path to link duwopctl to (must already exist)"
 read -p "[$default_path_dir]: " directory
 [[ -z "$directory" ]] && directory=${default_path_dir}
+
+if [[ ! -e $directory ]]; then
+  echo -e "${RED}Error:${NC} target directory ($directory) doesn't exist. Please create it and run again."
+  exit 1
+fi
 
 if [[ -w $directory ]]; then
   if [[ -L ${directory}/duwopctl ]]; then

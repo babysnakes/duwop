@@ -53,15 +53,15 @@ impl Setup {
 
     pub fn run(&self, skip_agent: bool, disable_tls: bool) -> SetupResult {
         self.create_duwop_dirs()?;
-        if skip_agent {
-            info("skipping agent setup");
-        } else {
-            self.install_gent(disable_tls)?;
-        }
-        self.install_resolve_file()?;
         if !disable_tls {
             self.install_ca_cert()?;
         }
+        if skip_agent {
+            info("skipping agent setup");
+        } else {
+            self.install_agent(disable_tls)?;
+        }
+        self.install_resolve_file()?;
         let bullet = format!("{} ", Paint::green("*"));
         let wrapper = textwrap::Wrapper::with_termwidth()
             .initial_indent(&bullet)
@@ -120,7 +120,7 @@ impl Setup {
         Ok(())
     }
 
-    fn install_gent(&self, disable_tls: bool) -> SetupResult {
+    fn install_agent(&self, disable_tls: bool) -> SetupResult {
         info("installing launchd agent");
         let duwop_exe = find_duwop_exe()?;
         let launchd_text = generate_launchd_template(&duwop_exe, disable_tls)
