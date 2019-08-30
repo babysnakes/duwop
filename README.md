@@ -71,8 +71,8 @@ Enjoy
     are not supported until the service is reloaded (reloading instructions are
     [here][reloading]). This is high priority fix.
   * Trusting self signed certificates is a moving target. Currently configuring
-    this trust is a manual step (documented [here][trust-cert]). We're trying to
-    find a way to automate this.
+    this trust is a manual step for some environments (documented
+    [here][trust-cert]). More automation may come later but it's low priority.
 
 ### Development environment setup
 
