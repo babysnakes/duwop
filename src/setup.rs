@@ -75,7 +75,9 @@ impl Setup {
         if !disable_tls {
             println!(
                 "{}",
-                wrapper.fill("learn how to configure your mac to trust your self-signed certificate: https://git.io/fjd6Z")
+                wrapper.fill(
+                    "more info about working with self-signed certificates: https://git.io/fjd6Z"
+                )
             );
         }
         println!(
@@ -209,6 +211,19 @@ impl Setup {
         save_cert
             .perform(self.dry_run)
             .context("saving CA certificate")?;
+        info("Adding the newly created certificate to your keychain - so your browsers will trust it");
+        tell("You might be prompted to approve installing the created CA as a trusted certificate in your keychain");
+        run_command(
+            vec![
+                "security",
+                "add-trusted-cert",
+                "-k",
+                "login.keychain-db",
+                self.ca_cert_file.to_str().unwrap(),
+            ],
+            "installing certificate in keychain",
+            self.dry_run,
+        )?;
         Ok(())
     }
 
