@@ -138,7 +138,7 @@ fn run(app: Cli) -> Result<(), Error> {
     service_to_spawn.push(management_server);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
-            error!("DNS Server error: {:?}", err);
+            error!("DNS Server: {:?}", err);
         }));
         for service in service_to_spawn {
             tokio::spawn(service);

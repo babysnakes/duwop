@@ -512,7 +512,6 @@ mod tests {
     #[test]
     fn run_command_errors_if_command_fails() {
         let result = run_command(vec!["ls", "/no/such/directory"], "error_message", false);
-        println!("{:#?}", result);
         if let Err(err) = result {
             assert!(err.to_string().contains("error_message"));
         } else {
@@ -523,7 +522,6 @@ mod tests {
     #[test]
     fn test_template_with_tls() {
         let result = generate_launchd_template("/some/path", false).unwrap();
-        // println!("with tls: {}", result);
         assert!(result.contains(AGENT_NAME), "failed agent name");
         assert!(
             result.contains(LAUNCHD_TLS_SOCKET),
@@ -538,7 +536,6 @@ mod tests {
     #[test]
     fn test_template_without_tls() {
         let result = generate_launchd_template("/some/path", true).unwrap();
-        // println!("without tls: {}", result);
         assert!(
             !result.contains(LAUNCHD_TLS_SOCKET),
             "should not contains tls socket deceleration"

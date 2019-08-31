@@ -219,7 +219,6 @@ mod tests {
         let state_dir = assert_fs::TempDir::new().unwrap();
         let mut link_path = state_dir.path().to_path_buf();
         link_path.push("test");
-        println!("source: {:?}\ntarget: {:?}", &source_path, &link_path);
         std::os::unix::fs::symlink(&source_path, &link_path).unwrap();
         assert_eq!(
             ServiceType::parse_config(link_path).unwrap(),
