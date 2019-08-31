@@ -21,7 +21,7 @@ use openssl::ssl::{SslAcceptor, SslMethod};
 use tokio::net::TcpListener;
 use tokio_openssl::SslAcceptorExt;
 
-type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
+type ErrorFut = Box<dyn Future<Item = Response<Body>, Error = Error> + Send>;
 
 enum MainFuture {
     Static(ErrorFut),
@@ -90,7 +90,7 @@ impl Server {
     }
 
     /// Run the server
-    pub fn run(self) -> Box<Future<Item = (), Error = ()> + Send> {
+    pub fn run(self) -> Box<dyn Future<Item = (), Error = ()> + Send> {
         // We can not launch hyper the default way because we might not have a
         // socket to bind to (e.g. in case we use launchd).
         use futures::stream::Stream;
@@ -101,7 +101,7 @@ impl Server {
                 let listener = listener.to_listener().unwrap();
                 let http = Http::new();
                 let state = Arc::clone(&state);
-                Box::new(listener.incoming().map_err(|e| error!("{:?}", e)).for_each(
+                Box::new(listener.incoming().map_err(|e| error!("HTTP server: {:?}", e)).for_each(
                     move |socket| {
                         let source_address = socket.peer_addr().unwrap();
                         let service = MainService {
@@ -110,7 +110,7 @@ impl Server {
                         };
                         tokio::spawn(
                             http.serve_connection(socket, service)
-                                .map_err(|e| error!("{:?}", e)),
+                                .map_err(|e| error!("HTTP server: {:?}", e)),
                         )
                     },
                 ))
@@ -126,14 +126,14 @@ impl Server {
                 let done =
                     listener
                         .incoming()
-                        .map_err(|e| error!("{:?}", e))
+                        .map_err(|e| error!("HTTPS server: {:?}", e))
                         .for_each(move |stream| {
                             let addr = stream.peer_addr().unwrap();
                             let state_clone = Arc::clone(&state);
                             let http = Http::new();
                             let done = acceptor
                                 .accept_async(stream)
-                                .map_err(|e| error!("{:?}", e))
+                                .map_err(|e| error!("HTTPS server: {:?}", e))
                                 .and_then(move |stream| {
                                     let service = MainService {
                                         state: state_clone,
@@ -141,7 +141,7 @@ impl Server {
                                     };
                                     let done = http
                                         .serve_connection(stream, service)
-                                        .map_err(|e| error!("{:?}", e));
+                                        .map_err(|e| error!("HTTPS server: {:?}", e));
                                     tokio::spawn(done)
                                 });
                             tokio::spawn(done)

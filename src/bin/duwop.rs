@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 
 use dotenv;
 use failure::Error;
-use flexi_logger::{Cleanup, Criterion, Logger, Naming};
+use flexi_logger::{opt_format, Cleanup, Criterion, Logger, Naming};
 use futures::future::{self, Future};
 use log::{debug, error, info};
 use structopt::{self, StructOpt};
@@ -90,6 +90,7 @@ fn run(app: Cli) -> Result<(), Error> {
     let log_handler = if app.log_to_file || app.launchd {
         Logger::with_str(&log_level)
             .log_to_file()
+            .format(opt_format)
             .directory(LOG_DIR.to_owned())
             .rotate(
                 Criterion::Size(10_000_000),
@@ -137,7 +138,7 @@ fn run(app: Cli) -> Result<(), Error> {
     service_to_spawn.push(management_server);
     tokio::run(future::lazy(|| {
         tokio::spawn(dns_server.map_err(|err| {
-            error!("DNS Server error: {:?}", err);
+            error!("DNS Server: {:?}", err);
         }));
         for service in service_to_spawn {
             tokio::spawn(service);

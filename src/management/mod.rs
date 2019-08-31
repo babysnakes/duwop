@@ -8,7 +8,7 @@ use super::state::AppState;
 
 use failure::{format_err, Error};
 use flexi_logger::{LogSpecification, ReconfigurationHandle};
-use log::info;
+use log::{error, info};
 use tokio;
 use tokio::io::{lines, write_all};
 use tokio::net::TcpListener;
@@ -85,7 +85,7 @@ impl Server {
         Box::new(
             listener
                 .incoming()
-                .map_err(|e| println!("error accepting socket; error = {:?}", e))
+                .map_err(|e| error!("Management service: {:?}", e))
                 .for_each(move |socket| {
                     let (reader, writer) = socket.split();
                     let lines = lines(BufReader::new(reader));

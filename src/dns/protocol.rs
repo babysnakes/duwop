@@ -4,6 +4,8 @@ use std::io::Result;
 use std::io::{Error, ErrorKind};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use log::warn;
+
 pub struct BytePacketBuffer {
     pub buf: [u8; 512],
     pub pos: usize,
@@ -662,7 +664,7 @@ impl DnsRecord {
                 }
             }
             DnsRecord::UNKNOWN { .. } => {
-                println!("Skipping record: {:?}", self);
+                warn!("Skipping record: {:?}", self);
             }
         }
 

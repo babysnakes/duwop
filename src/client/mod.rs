@@ -345,7 +345,6 @@ mod tests {
         let key = PathBuf::from("/no/such/key");
         let cert = PathBuf::from("/no/such/cert");
         let res = validate_ca(key, cert).unwrap();
-        println!("{:#?}", res);
         assert!(
             res.is_none(),
             "should return None, indicating not configured"
