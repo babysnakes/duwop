@@ -21,7 +21,7 @@ use openssl::ssl::{SslAcceptor, SslMethod};
 use tokio::net::TcpListener;
 use tokio_openssl::SslAcceptorExt;
 
-type ErrorFut = Box<Future<Item = Response<Body>, Error = Error> + Send>;
+type ErrorFut = Box<dyn Future<Item = Response<Body>, Error = Error> + Send>;
 
 enum MainFuture {
     Static(ErrorFut),
@@ -90,7 +90,7 @@ impl Server {
     }
 
     /// Run the server
-    pub fn run(self) -> Box<Future<Item = (), Error = ()> + Send> {
+    pub fn run(self) -> Box<dyn Future<Item = (), Error = ()> + Send> {
         // We can not launch hyper the default way because we might not have a
         // socket to bind to (e.g. in case we use launchd).
         use futures::stream::Stream;

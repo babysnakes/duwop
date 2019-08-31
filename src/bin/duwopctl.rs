@@ -233,7 +233,7 @@ fn run(app: Cli) -> Result<(), Error> {
     }
 }
 
-fn format_log(w: &mut io::Write, _now: &mut DeferredNow, record: &Record) -> Result<(), io::Error> {
+fn format_log(w: &mut dyn io::Write, _now: &mut DeferredNow, record: &Record) -> Result<(), io::Error> {
     let level = record.level();
     write!(w, "{}: {}", style(level, record.level()), &record.args(),)
 }
