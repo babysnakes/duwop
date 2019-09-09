@@ -101,19 +101,22 @@ impl Server {
                 let listener = listener.to_listener().unwrap();
                 let http = Http::new();
                 let state = Arc::clone(&state);
-                Box::new(listener.incoming().map_err(|e| error!("HTTP server: {:?}", e)).for_each(
-                    move |socket| {
-                        let source_address = socket.peer_addr().unwrap();
-                        let service = MainService {
-                            state: Arc::clone(&state),
-                            remote_addr: source_address,
-                        };
-                        tokio::spawn(
-                            http.serve_connection(socket, service)
-                                .map_err(|e| error!("HTTP server: {:?}", e)),
-                        )
-                    },
-                ))
+                Box::new(
+                    listener
+                        .incoming()
+                        .map_err(|e| error!("HTTP server: {:?}", e))
+                        .for_each(move |socket| {
+                            let source_address = socket.peer_addr().unwrap();
+                            let service = MainService {
+                                state: Arc::clone(&state),
+                                remote_addr: source_address,
+                            };
+                            tokio::spawn(
+                                http.serve_connection(socket, service)
+                                    .map_err(|e| error!("HTTP server: {:?}", e)),
+                            )
+                        }),
+                )
             }
             Server::Https {
                 listener,
@@ -123,29 +126,28 @@ impl Server {
                 let listener = listener.to_listener().unwrap();
                 let state = Arc::clone(&state);
                 let acceptor = acceptor.clone();
-                let done =
-                    listener
-                        .incoming()
-                        .map_err(|e| error!("HTTPS server: {:?}", e))
-                        .for_each(move |stream| {
-                            let addr = stream.peer_addr().unwrap();
-                            let state_clone = Arc::clone(&state);
-                            let http = Http::new();
-                            let done = acceptor
-                                .accept_async(stream)
-                                .map_err(|e| error!("HTTPS server: {:?}", e))
-                                .and_then(move |stream| {
-                                    let service = MainService {
-                                        state: state_clone,
-                                        remote_addr: addr,
-                                    };
-                                    let done = http
-                                        .serve_connection(stream, service)
-                                        .map_err(|e| error!("HTTPS server: {:?}", e));
-                                    tokio::spawn(done)
-                                });
-                            tokio::spawn(done)
-                        });
+                let done = listener
+                    .incoming()
+                    .map_err(|e| error!("HTTPS server: {:?}", e))
+                    .for_each(move |stream| {
+                        let addr = stream.peer_addr().unwrap();
+                        let state_clone = Arc::clone(&state);
+                        let http = Http::new();
+                        let done = acceptor
+                            .accept_async(stream)
+                            .map_err(|e| error!("HTTPS server: {:?}", e))
+                            .and_then(move |stream| {
+                                let service = MainService {
+                                    state: state_clone,
+                                    remote_addr: addr,
+                                };
+                                let done = http
+                                    .serve_connection(stream, service)
+                                    .map_err(|e| error!("HTTPS server: {:?}", e));
+                                tokio::spawn(done)
+                            });
+                        tokio::spawn(done)
+                    });
                 Box::new(done)
             }
         }
