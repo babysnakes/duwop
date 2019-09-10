@@ -3,6 +3,7 @@ use duwop::cli_helpers::*;
 use duwop::dns::DNSServer;
 use duwop::management::Server as ManagementServer;
 use duwop::state::AppState;
+use duwop::supervisor::Supervisor;
 use duwop::web::Server as WebServer;
 
 use std::path::PathBuf;
@@ -11,8 +12,7 @@ use std::sync::{Arc, RwLock};
 use dotenv;
 use failure::Error;
 use flexi_logger::{opt_format, Cleanup, Criterion, Logger, Naming};
-use futures::future::{self, Future};
-use log::{debug, error, info};
+use log::{debug, info};
 use structopt::{self, StructOpt};
 
 /// Web serve local directories and proxy local ports on default http port and
@@ -110,40 +110,29 @@ fn run(app: Cli) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(app.dns_port.unwrap_or(DNS_PORT))?;
-    // this is a hack until I completely rewrite initialization.
-    let mut service_to_spawn = vec![];
     let web_server = WebServer::new_http(
         app.http_port.unwrap_or(HTTP_PORT),
         app.launchd,
         Arc::clone(&locked),
-    )?
-    .run();
-    service_to_spawn.push(web_server);
-    if !app.disable_tls {
-        let web_server_ssl = WebServer::new_https(
+    )?;
+    let web_server_ssl = if app.disable_tls {
+        None
+    } else {
+        Some(WebServer::new_https(
             app.https_port.unwrap_or(HTTPS_PORT),
             app.launchd,
             Arc::clone(&locked),
-        )?
-        .run();
-        service_to_spawn.push(web_server_ssl);
-    }
+        )?)
+    };
     let management_server = ManagementServer::new(
         app.management_port.unwrap_or(MANAGEMENT_PORT),
         Arc::clone(&locked),
         Arc::clone(&locked_handler),
         log_level,
-    )
-    .run();
-    service_to_spawn.push(management_server);
-    tokio::run(future::lazy(|| {
-        tokio::spawn(dns_server.map_err(|err| {
-            error!("DNS Server: {:?}", err);
-        }));
-        for service in service_to_spawn {
-            tokio::spawn(service);
-        }
-        Ok(())
-    }));
+    );
+    let supervisor = Supervisor::new(dns_server, management_server, web_server, web_server_ssl);
+    info!("Duwop is starting...");
+    tokio::run(supervisor.run());
+    info!("Duwop exited");
     Ok(())
 }
