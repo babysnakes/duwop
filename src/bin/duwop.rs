@@ -4,8 +4,9 @@ use duwop::dns::DNSServer;
 use duwop::management::Server as ManagementServer;
 use duwop::state::AppState;
 use duwop::supervisor::Supervisor;
-use duwop::web::Server as WebServer;
+use duwop::web::{HttpServer, HttpsServer, ServerListener};
 
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -65,7 +66,7 @@ struct Cli {
     /// disable TLS - service will ony serve through HTTP
     #[structopt(long = "disable-tls")]
     disable_tls: bool,
-} // FIX disable tls
+}
 
 fn main() {
     dotenv::dotenv().ok();
@@ -110,18 +111,29 @@ fn run(app: Cli) -> Result<(), Error> {
     app_state.load_services()?;
     let locked = Arc::new(RwLock::new(app_state));
     let dns_server = DNSServer::new(app.dns_port.unwrap_or(DNS_PORT))?;
-    let web_server = WebServer::new_http(
-        app.http_port.unwrap_or(HTTP_PORT),
-        app.launchd,
-        Arc::clone(&locked),
-    )?;
-    let web_server_ssl = if app.disable_tls {
+    let http_listener = if app.launchd {
+        ServerListener::Launchd(LAUNCHD_SOCKET.to_owned())
+    } else {
+        ServerListener::TcpListener(
+            (Ipv4Addr::LOCALHOST, app.http_port.unwrap_or(HTTP_PORT)).into(),
+        )
+    };
+    let http_server = HttpServer::new(http_listener, Arc::clone(&locked))?;
+    let https_server = if app.disable_tls {
         None
     } else {
-        Some(WebServer::new_https(
-            app.https_port.unwrap_or(HTTPS_PORT),
-            app.launchd,
+        let https_listener = if app.launchd {
+            ServerListener::Launchd(LAUNCHD_TLS_SOCKET.to_owned())
+        } else {
+            ServerListener::TcpListener(
+                (Ipv4Addr::LOCALHOST, app.https_port.unwrap_or(HTTPS_PORT)).into(),
+            )
+        };
+        Some(HttpsServer::new(
+            https_listener,
             Arc::clone(&locked),
+            CA_CERT.to_owned(),
+            CA_KEY.to_owned(),
         )?)
     };
     let management_server = ManagementServer::new(
@@ -130,7 +142,7 @@ fn run(app: Cli) -> Result<(), Error> {
         Arc::clone(&locked_handler),
         log_level,
     );
-    let supervisor = Supervisor::new(dns_server, management_server, web_server, web_server_ssl);
+    let supervisor = Supervisor::new(dns_server, management_server, http_server, https_server);
     info!("Duwop is starting...");
     tokio::run(supervisor.run());
     info!("Duwop exited");

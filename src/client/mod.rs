@@ -29,8 +29,11 @@ impl DuwopClient {
     }
 
     pub fn reload_server_configuration(&self) -> Result<(), Error> {
-        let client = MgmtClient::new(self.management_port);
-        process_client_response(client.run_client_command(Request::ReloadState))
+        self.handle_request(Request::ReloadState)
+    }
+
+    pub fn reload_ssl(&self) -> Result<(), Error> {
+        self.handle_request(Request::ReloadSsl)
     }
 
     pub fn run_log_command(
@@ -71,6 +74,7 @@ impl DuwopClient {
             "created static file service '{}' pointing to {:?}",
             &name, &web_dir
         );
+        info!("run 'reload-ssl' if you want to access the new service with https");
         self.reload_server_configuration()
     }
 
@@ -81,6 +85,7 @@ impl DuwopClient {
         let st = ServiceType::ReverseProxy(addr);
         st.create(&proxy_file)?;
         info!("saved proxy file: {:?}", &proxy_file);
+        info!("run 'reload-ssl' if you want to access the new service with https");
         self.reload_server_configuration()
     }
 
@@ -130,8 +135,7 @@ impl DuwopClient {
     }
 
     fn check_server_status(&self) -> Result<(), Error> {
-        let client = MgmtClient::new(self.management_port);
-        process_client_response(client.run_client_command(Request::ServerStatus))
+        self.handle_request(Request::ServerStatus)
     }
 
     fn check_database_status(
@@ -164,6 +168,11 @@ impl DuwopClient {
             })
             .collect();
         Ok((invalids, name_errors, io_errors))
+    }
+
+    fn handle_request(&self, req: Request) -> Result<(), Error> {
+        let client = MgmtClient::new(self.management_port);
+        process_client_response(client.run_client_command(req))
     }
 }
 
@@ -322,12 +331,11 @@ fn process_client_response(result: Result<Response, Error>) -> Result<(), Error>
     match result {
         Ok(resp) => {
             let msg = resp.serialize();
-            match resp {
-                Response::Done => {
-                    info!("{}", msg);
-                    Ok(())
-                }
-                Response::Error(_) => Err(format_err!("Error from server: {}", msg)),
+            if let Response::Error(_) = resp {
+                Err(format_err!("Error from server: {}", msg))
+            } else {
+                info!("{}", msg);
+                Ok(())
             }
         }
         Err(err) => Err(err),

@@ -54,6 +54,19 @@ enum CliSubCommand {
     #[structopt(name = "reload", author = "")]
     Reload,
 
+    /// Reload the SSL certificate.
+    ///
+    /// This will re-generate a new SSL certificate signed by the configured
+    /// trusted CA. Run this command if you added a new service (e.g. link or
+    /// proxy) and you want to access it through https.
+    ///
+    /// Note that the result of this command doesn't know if the operation
+    /// succeeded (e.g. you can run it with TLS disabled and it will have the
+    /// same output). You have to try to access the service with https or check
+    /// the logs to see if it succeeded.
+    #[structopt(name = "reload-ssl", author = "")]
+    ReloadSsl,
+
     /// Change log level on the duwop server during runtime.
     ///
     /// This command lets you switch log level on the duwop service in runtime.
@@ -215,6 +228,7 @@ fn run(app: Cli) -> Result<(), Error> {
     let duwop_client = DuwopClient::new(mgmt_port, state_dir);
     match app.command {
         CliSubCommand::Reload => duwop_client.reload_server_configuration(),
+        CliSubCommand::ReloadSsl => duwop_client.reload_ssl(),
         CliSubCommand::Log { command, level } => duwop_client.run_log_command(command, level),
         CliSubCommand::Link { name, source } => {
             duwop_client.create_static_file_configuration(name, source)

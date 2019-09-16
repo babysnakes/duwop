@@ -1,7 +1,8 @@
 use super::dns::DNSServer;
 use super::management::Server as ManagementServer;
-use super::web::Server as WebServer;
+use super::web::{HttpServer, HttpsServer};
 
+use futures::sync::mpsc;
 use futures::Future;
 use log::error;
 use signal_hook::iterator::Signals;
@@ -13,16 +14,16 @@ pub type ServerF = Box<dyn Future<Item = (), Error = ()> + Send>;
 pub struct Supervisor {
     dns_server: DNSServer,
     management_server: ManagementServer,
-    http_server: WebServer,
-    https_server: Option<WebServer>,
+    http_server: HttpServer,
+    https_server: Option<HttpsServer>,
 }
 
 impl Supervisor {
     pub fn new(
         dns_server: DNSServer,
         management_server: ManagementServer,
-        http_server: WebServer,
-        https_server: Option<WebServer>,
+        http_server: HttpServer,
+        https_server: Option<HttpsServer>,
     ) -> Self {
         Supervisor {
             dns_server,
@@ -33,16 +34,17 @@ impl Supervisor {
     }
 
     pub fn run(self) -> Box<dyn Future<Item = (), Error = ()> + Send> {
+        let (tx, rx) = mpsc::channel::<()>(1);
         let mut servers: Vec<ServerF> = vec![
             Box::new(
                 self.dns_server
                     .map_err(|e| error!("DNS Server error: {}", e)),
             ),
-            self.management_server.run(),
+            self.management_server.run(tx),
             self.http_server.run(),
         ];
         if let Some(server) = self.https_server {
-            servers.push(server.run());
+            servers.push(server.run(rx));
         };
         let trap = Signals::new(&[signal_hook::SIGTERM, signal_hook::SIGINT])
             .unwrap()
