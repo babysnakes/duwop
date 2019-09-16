@@ -280,8 +280,8 @@ impl fmt::Display for Status {
         if self.is_db_clean() {
             writeln!(f, "Database Status: {}", Paint::green("OK"))?;
         } else {
+            writeln!(f, "Database Status: {}", Paint::red("ERROR"))?;
             if !self.invalid_configurations.is_empty() {
-                writeln!(f, "Database Status: {}", Paint::red("ERROR"))?;
                 writeln!(f, "    The following services have configuration errors:")?;
                 for (service, err) in &self.invalid_configurations {
                     let msg = format!("{}: {}", service, err);
@@ -301,7 +301,7 @@ impl fmt::Display for Status {
                     "    The following IO errors occurred while reading the database;"
                 )?;
                 for err in &self.io_errors {
-                    writeln!(f, "{}", &err)?;
+                    writeln!(f, "{}", wrapper.fill(&err))?;
                 }
             }
         }

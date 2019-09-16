@@ -172,8 +172,8 @@ impl AppState {
                         services.insert(key, service_type);
                     }
                     Err(err) => {
-                        warn!("received error from parse_config: {}", err);
-                        errors.push(ServiceConfigError::IoError(format!("{}", err)));
+                        warn!("error parsing {:?}: {}", name, err);
+                        errors.push(ServiceConfigError::IoError(format!("{:?}: {}", name, err)));
                     }
                 },
                 Err(_) => {
