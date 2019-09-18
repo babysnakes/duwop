@@ -136,7 +136,7 @@ impl Server {
                                 tokio::spawn(
                                     tx.send(())
                                         .map(|_| ())
-                                        .map_err(|e| error!("error signaling ssh reload: {:?}", e)),
+                                        .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
                                 );
                                 Response::Ok("Ssl replacement initiated. Please check.".to_string())
                             }
