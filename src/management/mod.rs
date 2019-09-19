@@ -106,40 +106,15 @@ impl Server {
                             Err(e) => return Response::Error(e),
                         };
                         match request {
-                            Request::ReloadState => match server.reload_state() {
-                                Ok(()) => Response::Done,
-                                Err(e) => Response::Error(format!("error reloading: {}", e)),
-                            },
+                            Request::ReloadState => server.handle_reload_state(),
                             Request::SetLogLevel(log_level) => {
-                                match server.set_log_level(log_level) {
-                                    Ok(()) => Response::Done,
-                                    Err(e) => {
-                                        Response::Error(format!("error setting log level: {}", e))
-                                    }
-                                }
+                                server.handle_set_log_level(log_level)
                             }
-                            Request::ResetLogLevel => match server.reset_log_level() {
-                                Ok(()) => Response::Done,
-                                Err(e) => {
-                                    Response::Error(format!("error setting log level: {}", e))
-                                }
-                            },
-                            Request::ServerStatus => match server.status() {
-                                Ok(_) => Response::Done,
-                                Err(e) => Response::Error(format!(
-                                    "error querying server for status: {}",
-                                    e
-                                )),
-                            },
-                            Request::ReloadSsl => {
-                                let tx = tx_ssl.read().unwrap().clone();
-                                tokio::spawn(
-                                    tx.send(())
-                                        .map(|_| ())
-                                        .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
-                                );
-                                Response::Ok("Ssl replacement initiated. Please check.".to_string())
-                            }
+                            Request::ResetLogLevel => server.handle_set_log_level(
+                                LogLevel::CustomLevel(server.log_level.to_owned()),
+                            ),
+                            Request::ServerStatus => server.handle_status(),
+                            Request::ReloadSsl => server.handle_reload_ssl(Arc::clone(&tx_ssl)),
                         }
                     });
                     let writes = responses.fold(writer, |writer, response| {
@@ -155,38 +130,46 @@ impl Server {
         )
     }
 
-    fn reload_state(&mut self) -> Result<(), Error> {
+    fn handle_reload_state(&mut self) -> Response {
         let state = Arc::clone(&self.state);
         let mut unlocked = state.write().unwrap();
-        unlocked.load_services()?;
-        Ok(())
+        match unlocked.load_services() {
+            Ok(()) => Response::Done,
+            Err(e) => Response::Error(format!("error reloading: {}", e)),
+        }
     }
 
-    fn set_log_level(&mut self, level: LogLevel) -> Result<(), Error> {
+    fn handle_reload_ssl(&mut self, tx_ssl: Arc<RwLock<Sender<()>>>) -> Response {
+        let tx = tx_ssl.read().unwrap().clone();
+        tokio::spawn(
+            tx.send(())
+                .map(|_| ())
+                .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
+        );
+        Response::Ok("Ssl replacement initiated. Please check.".to_string())
+    }
+
+    fn handle_set_log_level(&mut self, level: LogLevel) -> Response {
         info!("setting log level to: {:?}", level);
         let locked = Arc::clone(&self.log_handler);
         let mut handler = locked.write().unwrap();
         let spec = match level {
-            LogLevel::DebugLevel => LogSpecification::parse("duwop=debug")?,
-            LogLevel::TraceLevel => LogSpecification::parse("duwop=trace")?,
-            LogLevel::CustomLevel(value) => LogSpecification::parse(&value)?,
+            LogLevel::DebugLevel => LogSpecification::parse("duwop=debug"),
+            LogLevel::TraceLevel => LogSpecification::parse("duwop=trace"),
+            LogLevel::CustomLevel(value) => LogSpecification::parse(&value),
         };
-        handler.set_new_spec(spec);
-        Ok(())
+        match spec {
+            Ok(spec) => {
+                handler.set_new_spec(spec);
+                Response::Done
+            }
+            Err(err) => Response::Error(format!("error setting log level: {}", err)),
+        }
     }
 
-    fn reset_log_level(&mut self) -> Result<(), Error> {
-        info!("resetting log level to: {}", &self.log_level);
-        let locked = Arc::clone(&self.log_handler);
-        let mut handler = locked.write().unwrap();
-        let spec = LogSpecification::parse(&self.log_level)?;
-        handler.set_new_spec(spec);
-        Ok(())
-    }
-
-    fn status(&self) -> Result<(), Error> {
+    fn handle_status(&self) -> Response {
         info!("received status request");
-        Ok(())
+        Response::Done
     }
 }
 
