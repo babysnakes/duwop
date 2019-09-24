@@ -59,11 +59,6 @@ enum CliSubCommand {
     /// This will re-generate a new SSL certificate signed by the configured
     /// trusted CA. Run this command if you added a new service (e.g. link or
     /// proxy) and you want to access it through https.
-    ///
-    /// Note that the result of this command doesn't know if the operation
-    /// succeeded (e.g. you can run it with TLS disabled and it will have the
-    /// same output). You have to try to access the service with https or check
-    /// the logs to see if it succeeded.
     #[structopt(name = "reload-ssl", author = "")]
     ReloadSsl,
 

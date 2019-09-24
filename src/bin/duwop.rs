@@ -141,6 +141,7 @@ fn run(app: Cli) -> Result<(), Error> {
         Arc::clone(&locked),
         Arc::clone(&locked_handler),
         log_level,
+        app.disable_tls,
     );
     let supervisor = Supervisor::new(dns_server, management_server, http_server, https_server);
     info!("Duwop is starting...");

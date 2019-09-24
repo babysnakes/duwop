@@ -17,10 +17,16 @@ use tokio::prelude::*;
 
 #[derive(Clone)]
 pub struct Server {
-    port: u16,
     state: Arc<RwLock<AppState>>,
     log_handler: Arc<RwLock<ReconfigurationHandle>>,
+    config: Config,
+}
+
+#[derive(Clone)]
+struct Config {
+    port: u16,
     log_level: String,
+    ssl_enabled: bool,
 }
 
 /// Protocol request
@@ -77,18 +83,23 @@ impl Server {
         state: Arc<RwLock<AppState>>,
         log_handler: Arc<RwLock<ReconfigurationHandle>>,
         log_level: String,
+        ssl_disabled: bool,
     ) -> Self {
-        Server {
+        let config = Config {
             port,
+            log_level,
+            ssl_enabled: !ssl_disabled,
+        };
+        Server {
             state,
             log_handler,
-            log_level,
+            config,
         }
     }
 
     /// Returns a future to run the management server.
     pub fn run(self, tx: Sender<()>) -> Box<impl Future<Item = (), Error = ()> + Send> {
-        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, self.port).into();
+        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, self.config.port).into();
         info!("listening for management requests on {}", &addr);
         let listener = TcpListener::bind(&addr).unwrap();
         Box::new(
@@ -111,7 +122,7 @@ impl Server {
                                 server.handle_set_log_level(log_level)
                             }
                             Request::ResetLogLevel => server.handle_set_log_level(
-                                LogLevel::CustomLevel(server.log_level.to_owned()),
+                                LogLevel::CustomLevel(server.config.log_level.to_owned()),
                             ),
                             Request::ServerStatus => server.handle_status(),
                             Request::ReloadSsl => server.handle_reload_ssl(Arc::clone(&tx_ssl)),
@@ -140,13 +151,17 @@ impl Server {
     }
 
     fn handle_reload_ssl(&mut self, tx_ssl: Arc<RwLock<Sender<()>>>) -> Response {
-        let tx = tx_ssl.read().unwrap().clone();
-        tokio::spawn(
-            tx.send(())
-                .map(|_| ())
-                .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
-        );
-        Response::Ok("Ssl replacement initiated. Please check.".to_string())
+        if self.config.ssl_enabled {
+            let tx = tx_ssl.read().unwrap().clone();
+            tokio::spawn(
+                tx.send(())
+                    .map(|_| ())
+                    .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
+            );
+            Response::Ok("Ssl replacement initiated. Please check.".to_string())
+        } else {
+            Response::Error("SSL is disabled!".to_string())
+        }
     }
 
     fn handle_set_log_level(&mut self, level: LogLevel) -> Response {
@@ -250,6 +265,17 @@ impl Response {
 mod tests {
     use super::*;
 
+    use assert_fs::TempDir;
+    use flexi_logger::Logger;
+    use futures::sync::mpsc;
+    use lazy_static::lazy_static;
+
+    const LOG_LEVEL: &str = "nothing:error";
+    lazy_static! {
+        static ref LOG_HANDLER: Arc<RwLock<ReconfigurationHandle>> =
+            Arc::new(RwLock::new(Logger::with_str(LOG_LEVEL).start().unwrap()));
+    }
+
     macro_rules! request_parse_ok {
         ($name:ident, $input:expr, $expected:expr) => {
             #[test]
@@ -305,6 +331,23 @@ mod tests {
         };
     }
 
+    fn create_empty_app_state() -> AppState {
+        let temp_dir = TempDir::new().unwrap();
+        let state_dir = temp_dir.path().to_path_buf();
+        AppState::new(&state_dir)
+    }
+
+    fn create_default_test_management_server(ssl_disabled: bool) -> Server {
+        let state = create_empty_app_state();
+        Server::new(
+            11111,
+            Arc::new(RwLock::new(state)),
+            LOG_HANDLER.clone(),
+            LOG_LEVEL.to_owned(),
+            ssl_disabled,
+        )
+    }
+
     request_parse_ok! { parse_reload, "Reload", Request::ReloadState }
     request_parse_ok! { parse_reset_log, "Log reset", Request::ResetLogLevel }
     request_parse_ok! {
@@ -352,4 +395,33 @@ mod tests {
     response_parse_error! { parse_empty_response, "", "invalid response" }
     response_parse_error! { parse_almost_ok_response, "OK-", "invalid response" }
     response_parse_error! { parse_ok_without_message, "OK:", "OK: without message" }
+
+    #[test]
+    fn management_server_with_ssl_handles_reload_ssl_correctly() {
+        let mut server = create_default_test_management_server(false);
+        let (tx, _rx) = mpsc::channel::<()>(1);
+        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create a runtime");
+        let result: Result<Response, Error> = runtime.block_on(futures::lazy(move || {
+            let res = server.handle_reload_ssl(Arc::new(RwLock::new(tx)));
+            Ok(res)
+        }));
+        let response = result.unwrap();
+        if let Response::Ok(_msg) = response {
+            // expected...
+        } else {
+            panic!("expected OK!, received: {:?}", response);
+        }
+    }
+
+    #[test]
+    fn management_server_without_ssl_handles_reload_ssl_with_error() {
+        let mut server = create_default_test_management_server(true);
+        let (tx, _rx) = mpsc::channel::<()>(1);
+        let response = server.handle_reload_ssl(Arc::new(RwLock::new(tx)));
+        if let Response::Error(_msg) = response {
+            // expected...
+        } else {
+            panic!("expected Error!, received: {:?}", response);
+        }
+    }
 }
