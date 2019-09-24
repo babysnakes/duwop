@@ -361,7 +361,8 @@ mod tests {
 
     #[test]
     fn process_response_when_error_should_not_contain_the_word_error() {
-        let error = process_client_response(Ok(Response::Error("some error".to_string()))).unwrap_err();
+        let error =
+            process_client_response(Ok(Response::Error("some error".to_string()))).unwrap_err();
         let result = format!("{}", error);
         assert!(!result.contains("ERROR"));
     }
