@@ -331,8 +331,8 @@ fn process_client_response(result: Result<Response, Error>) -> Result<(), Error>
     match result {
         Ok(resp) => {
             let msg = resp.serialize();
-            if let Response::Error(_) = resp {
-                Err(format_err!("Error from server: {}", msg))
+            if let Response::Error(err) = resp {
+                Err(format_err!("Error from server: {}", err))
             } else {
                 info!("{}", msg);
                 Ok(())
@@ -357,5 +357,12 @@ mod tests {
             res.is_none(),
             "should return None, indicating not configured"
         );
+    }
+
+    #[test]
+    fn process_response_when_error_should_not_contain_the_word_error() {
+        let error = process_client_response(Ok(Response::Error("some error".to_string()))).unwrap_err();
+        let result = format!("{}", error);
+        assert!(!result.contains("ERROR"));
     }
 }

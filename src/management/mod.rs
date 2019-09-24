@@ -158,7 +158,7 @@ impl Server {
                     .map(|_| ())
                     .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
             );
-            Response::Ok("Ssl replacement initiated. Please check.".to_string())
+            Response::Ok("SSL replacement initiated. Please check.".to_string())
         } else {
             Response::Error("SSL is disabled!".to_string())
         }
