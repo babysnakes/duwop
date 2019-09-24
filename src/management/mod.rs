@@ -8,6 +8,7 @@ use super::state::AppState;
 
 use failure::{format_err, Error};
 use flexi_logger::{LogSpecification, ReconfigurationHandle};
+use futures::sync::mpsc::Sender;
 use log::{error, info};
 use tokio;
 use tokio::io::{lines, write_all};
@@ -16,10 +17,16 @@ use tokio::prelude::*;
 
 #[derive(Clone)]
 pub struct Server {
-    port: u16,
     state: Arc<RwLock<AppState>>,
     log_handler: Arc<RwLock<ReconfigurationHandle>>,
+    config: Config,
+}
+
+#[derive(Clone)]
+struct Config {
+    port: u16,
     log_level: String,
+    ssl_enabled: bool,
 }
 
 /// Protocol request
@@ -36,6 +43,9 @@ pub enum Request {
 
     /// Query server for it's status, currently only indicates that it is running
     ServerStatus,
+
+    /// Reload SSL runtime certificate (to update names to serve)
+    ReloadSsl,
 }
 
 /// Represents various log level commands.
@@ -52,10 +62,15 @@ pub enum LogLevel {
 }
 
 /// Protocol response
+#[derive(Debug, PartialEq)]
 pub enum Response {
-    // A response without specific text
+    /// A response without specific text
     Done,
-    // Error message
+
+    /// An Ok response with message
+    Ok(String),
+
+    /// Error message
     Error(String),
 }
 
@@ -68,18 +83,23 @@ impl Server {
         state: Arc<RwLock<AppState>>,
         log_handler: Arc<RwLock<ReconfigurationHandle>>,
         log_level: String,
+        ssl_disabled: bool,
     ) -> Self {
-        Server {
+        let config = Config {
             port,
+            log_level,
+            ssl_enabled: !ssl_disabled,
+        };
+        Server {
             state,
             log_handler,
-            log_level,
+            config,
         }
     }
 
     /// Returns a future to run the management server.
-    pub fn run(self) -> Box<impl Future<Item = (), Error = ()> + Send> {
-        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, self.port).into();
+    pub fn run(self, tx: Sender<()>) -> Box<impl Future<Item = (), Error = ()> + Send> {
+        let addr: SocketAddr = (Ipv4Addr::LOCALHOST, self.config.port).into();
         info!("listening for management requests on {}", &addr);
         let listener = TcpListener::bind(&addr).unwrap();
         Box::new(
@@ -90,37 +110,22 @@ impl Server {
                     let (reader, writer) = socket.split();
                     let lines = lines(BufReader::new(reader));
                     let mut server = self.clone();
+                    let tx_ssl = Arc::new(RwLock::new(tx.clone()));
                     let responses = lines.map(move |line| {
                         let request = match Request::parse(&line) {
                             Ok(req) => req,
                             Err(e) => return Response::Error(e),
                         };
                         match request {
-                            Request::ReloadState => match server.reload_state() {
-                                Ok(()) => Response::Done,
-                                Err(e) => Response::Error(format!("error reloading: {}", e)),
-                            },
+                            Request::ReloadState => server.handle_reload_state(),
                             Request::SetLogLevel(log_level) => {
-                                match server.set_log_level(log_level) {
-                                    Ok(()) => Response::Done,
-                                    Err(e) => {
-                                        Response::Error(format!("error setting log level: {}", e))
-                                    }
-                                }
+                                server.handle_set_log_level(log_level)
                             }
-                            Request::ResetLogLevel => match server.reset_log_level() {
-                                Ok(()) => Response::Done,
-                                Err(e) => {
-                                    Response::Error(format!("error setting log level: {}", e))
-                                }
-                            },
-                            Request::ServerStatus => match server.status() {
-                                Ok(_) => Response::Done,
-                                Err(e) => Response::Error(format!(
-                                    "error querying server for status: {}",
-                                    e
-                                )),
-                            },
+                            Request::ResetLogLevel => server.handle_set_log_level(
+                                LogLevel::CustomLevel(server.config.log_level.to_owned()),
+                            ),
+                            Request::ServerStatus => server.handle_status(),
+                            Request::ReloadSsl => server.handle_reload_ssl(Arc::clone(&tx_ssl)),
                         }
                     });
                     let writes = responses.fold(writer, |writer, response| {
@@ -136,38 +141,50 @@ impl Server {
         )
     }
 
-    fn reload_state(&mut self) -> Result<(), Error> {
+    fn handle_reload_state(&mut self) -> Response {
         let state = Arc::clone(&self.state);
         let mut unlocked = state.write().unwrap();
-        unlocked.load_services()?;
-        Ok(())
+        match unlocked.load_services() {
+            Ok(()) => Response::Done,
+            Err(e) => Response::Error(format!("error reloading: {}", e)),
+        }
     }
 
-    fn set_log_level(&mut self, level: LogLevel) -> Result<(), Error> {
+    fn handle_reload_ssl(&mut self, tx_ssl: Arc<RwLock<Sender<()>>>) -> Response {
+        if self.config.ssl_enabled {
+            let tx = tx_ssl.read().unwrap().clone();
+            tokio::spawn(
+                tx.send(())
+                    .map(|_| ())
+                    .map_err(|e| error!("error signaling ssl reload: {:?}", e)),
+            );
+            Response::Ok("SSL replacement initiated. Please check.".to_string())
+        } else {
+            Response::Error("SSL is disabled!".to_string())
+        }
+    }
+
+    fn handle_set_log_level(&mut self, level: LogLevel) -> Response {
         info!("setting log level to: {:?}", level);
         let locked = Arc::clone(&self.log_handler);
         let mut handler = locked.write().unwrap();
         let spec = match level {
-            LogLevel::DebugLevel => LogSpecification::parse("duwop=debug")?,
-            LogLevel::TraceLevel => LogSpecification::parse("duwop=trace")?,
-            LogLevel::CustomLevel(value) => LogSpecification::parse(&value)?,
+            LogLevel::DebugLevel => LogSpecification::parse("duwop=debug"),
+            LogLevel::TraceLevel => LogSpecification::parse("duwop=trace"),
+            LogLevel::CustomLevel(value) => LogSpecification::parse(&value),
         };
-        handler.set_new_spec(spec);
-        Ok(())
+        match spec {
+            Ok(spec) => {
+                handler.set_new_spec(spec);
+                Response::Done
+            }
+            Err(err) => Response::Error(format!("error setting log level: {}", err)),
+        }
     }
 
-    fn reset_log_level(&mut self) -> Result<(), Error> {
-        info!("resetting log level to: {}", &self.log_level);
-        let locked = Arc::clone(&self.log_handler);
-        let mut handler = locked.write().unwrap();
-        let spec = LogSpecification::parse(&self.log_level)?;
-        handler.set_new_spec(spec);
-        Ok(())
-    }
-
-    fn status(&self) -> Result<(), Error> {
+    fn handle_status(&self) -> Response {
         info!("received status request");
-        Ok(())
+        Response::Done
     }
 }
 
@@ -179,23 +196,22 @@ impl Request {
                 if parts.next().is_some() {
                     return Err("Reload doesn't take arguments".to_string());
                 };
-                Ok(Request::ReloadState)
+                Ok(Self::ReloadState)
             }
             Some("Log") => match parts.next() {
-                Some("reset") => Ok(Request::ResetLogLevel),
-                Some("debug") => Ok(Request::SetLogLevel(LogLevel::DebugLevel)),
-                Some("trace") => Ok(Request::SetLogLevel(LogLevel::TraceLevel)),
+                Some("reset") => Ok(Self::ResetLogLevel),
+                Some("debug") => Ok(Self::SetLogLevel(LogLevel::DebugLevel)),
+                Some("trace") => Ok(Self::SetLogLevel(LogLevel::TraceLevel)),
                 Some("custom") => match parts.next() {
                     // TODO: should we validate input? I managed to mess with the logger :(
-                    Some(value) => Ok(Request::SetLogLevel(LogLevel::CustomLevel(
-                        value.to_string(),
-                    ))),
+                    Some(value) => Ok(Self::SetLogLevel(LogLevel::CustomLevel(value.to_string()))),
                     None => Err("custom log level requires value".to_string()),
                 },
                 Some(cmd) => Err(format!("invalid log command: {}", cmd)),
                 None => Err("Log requires command".to_string()),
             },
-            Some("Status") => Ok(Request::ServerStatus),
+            Some("Status") => Ok(Self::ServerStatus),
+            Some("ReloadSsl") => Ok(Self::ReloadSsl),
             Some(cmd) => Err(format!("invalid command: {}", cmd)),
             None => Err("empty input".to_string()),
         }
@@ -211,6 +227,7 @@ impl Request {
             },
             Request::ResetLogLevel => "Log reset".to_string(),
             Request::ServerStatus => "Status".to_string(),
+            Request::ReloadSsl => "ReloadSsl".to_string(),
         }
     }
 }
@@ -220,6 +237,10 @@ impl Response {
         let mut parts = input.splitn(2, ' ');
         match parts.next().map(|s| s.trim()) {
             Some("OK") => Ok(Response::Done),
+            Some("OK:") => match parts.next() {
+                Some(txt) => Ok(Response::Ok(txt.to_string())),
+                None => Err(format_err!("bad response from server: OK: without message")),
+            },
             Some("ERROR") => {
                 let error = parts.next().unwrap_or("");
                 Ok(Response::Error(error.to_string()))
@@ -234,6 +255,7 @@ impl Response {
         let error = "ERROR".to_string();
         match self {
             Response::Done => ok,
+            Response::Ok(msg) => format!("OK: {}", msg),
             Response::Error(m) => format!("{} {}", error, m),
         }
     }
@@ -242,6 +264,17 @@ impl Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use assert_fs::TempDir;
+    use flexi_logger::Logger;
+    use futures::sync::mpsc;
+    use lazy_static::lazy_static;
+
+    const LOG_LEVEL: &str = "nothing:error";
+    lazy_static! {
+        static ref LOG_HANDLER: Arc<RwLock<ReconfigurationHandle>> =
+            Arc::new(RwLock::new(Logger::with_str(LOG_LEVEL).start().unwrap()));
+    }
 
     macro_rules! request_parse_ok {
         ($name:ident, $input:expr, $expected:expr) => {
@@ -274,6 +307,47 @@ mod tests {
         };
     }
 
+    macro_rules! response_parse_ok {
+        ($name:ident, $request:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                let result = Response::parse($request).unwrap();
+                assert_eq!(result, $expected);
+            }
+        };
+    }
+
+    macro_rules! response_parse_error {
+        ($name:ident, $request:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                if let Err(err) = Response::parse($request) {
+                    let msg = format!("{}", err);
+                    assert!(msg.contains($expected));
+                } else {
+                    panic!("response is not an error")
+                }
+            }
+        };
+    }
+
+    fn create_empty_app_state() -> AppState {
+        let temp_dir = TempDir::new().unwrap();
+        let state_dir = temp_dir.path().to_path_buf();
+        AppState::new(&state_dir)
+    }
+
+    fn create_default_test_management_server(ssl_disabled: bool) -> Server {
+        let state = create_empty_app_state();
+        Server::new(
+            11111,
+            Arc::new(RwLock::new(state)),
+            LOG_HANDLER.clone(),
+            LOG_LEVEL.to_owned(),
+            ssl_disabled,
+        )
+    }
+
     request_parse_ok! { parse_reload, "Reload", Request::ReloadState }
     request_parse_ok! { parse_reset_log, "Log reset", Request::ResetLogLevel }
     request_parse_ok! {
@@ -286,8 +360,8 @@ mod tests {
         parse_custom_log_level, "Log custom debug, duwop=trace",
         Request::SetLogLevel(LogLevel::CustomLevel("debug, duwop=trace".to_string()))
     }
-
     request_parse_ok! { parse_service_status, "Status", Request::ServerStatus }
+    request_parse_ok! { parse_reload_ssl, "ReloadSsl", Request::ReloadSsl }
 
     request_parse_err! { parse_reload_with_with_argument, "Reload more", "arguments" }
     request_parse_err! { parse_invalid_log_level_command, "Log invalid", "invalid log command" }
@@ -310,4 +384,44 @@ mod tests {
         "Log custom info, duwop:trace"
     }
     request_serialize! { serialize_server_status, Request::ServerStatus, "Status" }
+    request_serialize! { serialize_reload_ssl, Request::ReloadSsl, "ReloadSsl" }
+
+    response_parse_ok! { parse_done, "OK", Response::Done }
+    response_parse_ok! {
+        parse_ok_with_message,
+        "OK: a message",
+        Response::Ok("a message".to_string())
+    }
+    response_parse_error! { parse_empty_response, "", "invalid response" }
+    response_parse_error! { parse_almost_ok_response, "OK-", "invalid response" }
+    response_parse_error! { parse_ok_without_message, "OK:", "OK: without message" }
+
+    #[test]
+    fn management_server_with_ssl_handles_reload_ssl_correctly() {
+        let mut server = create_default_test_management_server(false);
+        let (tx, _rx) = mpsc::channel::<()>(1);
+        let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create a runtime");
+        let result: Result<Response, Error> = runtime.block_on(futures::lazy(move || {
+            let res = server.handle_reload_ssl(Arc::new(RwLock::new(tx)));
+            Ok(res)
+        }));
+        let response = result.unwrap();
+        if let Response::Ok(_msg) = response {
+            // expected...
+        } else {
+            panic!("expected OK!, received: {:?}", response);
+        }
+    }
+
+    #[test]
+    fn management_server_without_ssl_handles_reload_ssl_with_error() {
+        let mut server = create_default_test_management_server(true);
+        let (tx, _rx) = mpsc::channel::<()>(1);
+        let response = server.handle_reload_ssl(Arc::new(RwLock::new(tx)));
+        if let Response::Error(_msg) = response {
+            // expected...
+        } else {
+            panic!("expected Error!, received: {:?}", response);
+        }
+    }
 }

@@ -6,4 +6,5 @@ pub mod management;
 pub mod setup;
 pub mod ssl;
 pub mod state;
+pub mod supervisor;
 pub mod web;

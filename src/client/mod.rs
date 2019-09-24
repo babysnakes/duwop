@@ -29,8 +29,11 @@ impl DuwopClient {
     }
 
     pub fn reload_server_configuration(&self) -> Result<(), Error> {
-        let client = MgmtClient::new(self.management_port);
-        process_client_response(client.run_client_command(Request::ReloadState))
+        self.handle_request(Request::ReloadState)
+    }
+
+    pub fn reload_ssl(&self) -> Result<(), Error> {
+        self.handle_request(Request::ReloadSsl)
     }
 
     pub fn run_log_command(
@@ -71,6 +74,7 @@ impl DuwopClient {
             "created static file service '{}' pointing to {:?}",
             &name, &web_dir
         );
+        info!("run 'reload-ssl' if you want to access the new service with https");
         self.reload_server_configuration()
     }
 
@@ -81,6 +85,7 @@ impl DuwopClient {
         let st = ServiceType::ReverseProxy(addr);
         st.create(&proxy_file)?;
         info!("saved proxy file: {:?}", &proxy_file);
+        info!("run 'reload-ssl' if you want to access the new service with https");
         self.reload_server_configuration()
     }
 
@@ -130,8 +135,7 @@ impl DuwopClient {
     }
 
     fn check_server_status(&self) -> Result<(), Error> {
-        let client = MgmtClient::new(self.management_port);
-        process_client_response(client.run_client_command(Request::ServerStatus))
+        self.handle_request(Request::ServerStatus)
     }
 
     fn check_database_status(
@@ -164,6 +168,11 @@ impl DuwopClient {
             })
             .collect();
         Ok((invalids, name_errors, io_errors))
+    }
+
+    fn handle_request(&self, req: Request) -> Result<(), Error> {
+        let client = MgmtClient::new(self.management_port);
+        process_client_response(client.run_client_command(req))
     }
 }
 
@@ -271,8 +280,8 @@ impl fmt::Display for Status {
         if self.is_db_clean() {
             writeln!(f, "Database Status: {}", Paint::green("OK"))?;
         } else {
+            writeln!(f, "Database Status: {}", Paint::red("ERROR"))?;
             if !self.invalid_configurations.is_empty() {
-                writeln!(f, "Database Status: {}", Paint::red("ERROR"))?;
                 writeln!(f, "    The following services have configuration errors:")?;
                 for (service, err) in &self.invalid_configurations {
                     let msg = format!("{}: {}", service, err);
@@ -292,7 +301,7 @@ impl fmt::Display for Status {
                     "    The following IO errors occurred while reading the database;"
                 )?;
                 for err in &self.io_errors {
-                    writeln!(f, "{}", &err)?;
+                    writeln!(f, "{}", wrapper.fill(&err))?;
                 }
             }
         }
@@ -322,12 +331,11 @@ fn process_client_response(result: Result<Response, Error>) -> Result<(), Error>
     match result {
         Ok(resp) => {
             let msg = resp.serialize();
-            match resp {
-                Response::Done => {
-                    info!("{}", msg);
-                    Ok(())
-                }
-                Response::Error(_) => Err(format_err!("Error from server: {}", msg)),
+            if let Response::Error(err) = resp {
+                Err(format_err!("Error from server: {}", err))
+            } else {
+                info!("{}", msg);
+                Ok(())
             }
         }
         Err(err) => Err(err),
@@ -349,5 +357,13 @@ mod tests {
             res.is_none(),
             "should return None, indicating not configured"
         );
+    }
+
+    #[test]
+    fn process_response_when_error_should_not_contain_the_word_error() {
+        let error =
+            process_client_response(Ok(Response::Error("some error".to_string()))).unwrap_err();
+        let result = format!("{}", error);
+        assert!(!result.contains("ERROR"));
     }
 }

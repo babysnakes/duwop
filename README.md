@@ -62,14 +62,9 @@ Enjoy
   * Directory listing are not supported. If no `index.html` file in the
     directory 404 is returned - low priority.
 * Reverse proxy:
-  * Possibly allow to proxy web servers that are running on other internal ports
+  * Possibly allow to proxy web servers that are running on other internal ips
     (e.g. in VMware etc) - very low priority.
 * SSL Support:
-  * We are generating certificates only for the configured services and their
-    subdomains (this is the only way it can work as far as I know - details are
-    in the [certificates page][certs]). Because of that, newly created services
-    are not supported until the service is reloaded (reloading instructions are
-    [here][reloading]). This is high priority fix.
   * Trusting self signed certificates is a moving target. Currently configuring
     this trust is a manual step for some environments (documented
     [here][trust-cert]). More automation may come later but it's low priority.
@@ -120,7 +115,6 @@ rm ~/Library/LaunchAgents/org.babysnakes.duwop.plist
 [latest]: https://github.com/babysnakes/duwop/releases/latest
 [trust-cert]: https://git.io/fjd6Z
 [certs]: https://github.com/babysnakes/duwop/wiki/Certificates
-[reloading]: https://github.com/babysnakes/duwop/wiki/Certificates#reloading-the-service-to-generate-certificates-for-new-services
 [pd]: https://github.com/puma/puma-dev
 [emil]: https://github.com/EmilHernvall
 [dnsguide]: https://github.com/EmilHernvall/dnsguide

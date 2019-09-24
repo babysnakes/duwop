@@ -1,6 +1,6 @@
 [package]
 name = "duwop"
-version = "0.4.2-beta"
+version = "0.5.0-beta"
 authors = ["Haim Ashkenazi <haim@babysnakes.org>"]
 edition = "2018"
 license = "MIT"
@@ -15,6 +15,7 @@ foreign-types = "0.3.2" # match the version used by openssl
 tokio-openssl = "0.3.0"
 futures = "0.1.26"
 libc = "0.2.55"
+signal-hook = { version = "0.1.10", features = ["tokio-support"] }
 
 hyper = "0.12.28"
 http = "0.1.17"
