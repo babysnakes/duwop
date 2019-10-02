@@ -10,6 +10,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
+use dialoguer::Confirmation;
 use dns_lookup::lookup_host;
 use failure::{format_err, Error, ResultExt};
 use log::info;
@@ -89,7 +90,16 @@ impl DuwopClient {
         self.reload_server_configuration()
     }
 
-    pub fn delete_configuration(&self, name: String) -> Result<(), Error> {
+    pub fn delete_configuration(&self, name: String, confirm: bool) -> Result<(), Error> {
+        let message = format!("{} delete service {}?", Paint::green("??"), &name,);
+        if !confirm
+            && !Confirmation::new()
+                .with_text(&message)
+                .default(false)
+                .interact()?
+        {
+            return Err(format_err!("cancelled"));
+        };
         let mut to_delete = self.state_dir.clone();
         to_delete.push(&name);
         std::fs::remove_file(&to_delete).context(format!(

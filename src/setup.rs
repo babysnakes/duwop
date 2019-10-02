@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use dialoguer::Confirmation;
 use failure::{format_err, Error, ResultExt};
 use log::{debug, trace};
 use yansi::Paint;
@@ -97,7 +98,16 @@ impl Setup {
     }
 
     pub fn remove(&self) -> SetupResult {
-        info("Removing duwop configurations");
+        let message = format!("{} remove duwop system configurations?", Paint::green("??"),);
+        if Confirmation::new()
+            .with_text(&message)
+            .default(false)
+            .interact()?
+        {
+            info("Removing duwop configurations");
+        } else {
+            return Err(format_err!("cancelled"));
+        };
         self.remove_agent()?;
         self.remove_resolver_file()?;
 

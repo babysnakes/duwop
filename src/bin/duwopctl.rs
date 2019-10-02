@@ -120,6 +120,9 @@ enum CliSubCommand {
     Delete {
         /// The name of the service to delete
         name: String,
+        /// Skip deletion confirmation
+        #[structopt(short = "y")]
+        confirm_delete: bool,
     },
 
     /// List available services.
@@ -229,7 +232,10 @@ fn run(app: Cli) -> Result<(), Error> {
             duwop_client.create_static_file_configuration(name, source)
         }
         CliSubCommand::Proxy { name, port } => duwop_client.create_proxy_configuration(name, port),
-        CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
+        CliSubCommand::Delete {
+            name,
+            confirm_delete,
+        } => duwop_client.delete_configuration(name, confirm_delete),
         CliSubCommand::List => duwop_client.print_services(),
         CliSubCommand::Doctor => duwop_client.doctor(),
         CliSubCommand::Completion { shell, target_dir } => generate_completions(shell, target_dir),
