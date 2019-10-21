@@ -57,35 +57,48 @@ impl DuwopClient {
 
     pub fn create_static_file_configuration(
         &self,
-        name: String,
+        name: Option<String>,
         source_dir: Option<PathBuf>,
     ) -> Result<(), Error> {
+        self.parse_create_static_file_configuration_input(name, source_dir)
+            .and_then(|(web_dir, name)| ServiceType::StaticFiles(web_dir.clone()).create(&name))
+            .and_then(|_| {
+                info!("run 'reload-ssl' if you want to access the new service with https");
+                self.reload_server_configuration()
+            })
+    }
+
+    pub fn parse_create_static_file_configuration_input(
+        &self,
+        name: Option<String>,
+        source_dir: Option<PathBuf>,
+    ) -> Result<(PathBuf, String), Error> {
         let source_dir = match source_dir {
             Some(path) => path,
             None => std::env::current_dir()
                 .context("extracting working directory for source web directory")?,
         };
+        let service_name = match name {
+            Some(name) => name,
+            None => source_dir
+                .file_name()
+                .ok_or_else(|| format_err!("couldn't extract service name from source dir"))?
+                .to_str()
+                .ok_or_else(|| format_err!("invalid utf8 directory name"))?
+                .to_owned(),
+        };
         let mut link = self.state_dir.clone();
-        link.push(&name);
+        link.push(&service_name);
         let web_dir =
             std::fs::canonicalize(source_dir).context("normalizing web directory path")?;
-        let st = ServiceType::StaticFiles(web_dir.clone());
-        st.create(&link)?;
-        info!(
-            "created static file service '{}' pointing to {:?}",
-            &name, &web_dir
-        );
-        info!("run 'reload-ssl' if you want to access the new service with https");
-        self.reload_server_configuration()
+        Ok((web_dir, link.to_str().unwrap().to_owned()))
     }
 
     pub fn create_proxy_configuration(&self, name: String, port: u16) -> Result<(), Error> {
         let mut proxy_file = self.state_dir.clone();
         proxy_file.push(name);
         let addr: SocketAddr = (Ipv4Addr::LOCALHOST, port).into();
-        let st = ServiceType::ReverseProxy(addr);
-        st.create(&proxy_file)?;
-        info!("saved proxy file: {:?}", &proxy_file);
+        ServiceType::ReverseProxy(addr).create(&proxy_file)?;
         info!("run 'reload-ssl' if you want to access the new service with https");
         self.reload_server_configuration()
     }
@@ -358,6 +371,18 @@ mod tests {
 
     use std::path::PathBuf;
 
+    fn parse_link_input(
+        name: Option<String>,
+        path: Option<PathBuf>,
+    ) -> (DuwopClient, PathBuf, String) {
+        let state_dir = assert_fs::TempDir::new().unwrap();
+        let client = DuwopClient::new(1111, state_dir.path().to_path_buf());
+        let (path, name) = client
+            .parse_create_static_file_configuration_input(name, path)
+            .unwrap();
+        (client, path, name)
+    }
+
     #[test]
     fn test_validate_ca_non_existing_cert() {
         let key = PathBuf::from("/no/such/key");
@@ -375,5 +400,38 @@ mod tests {
             process_client_response(Ok(Response::Error("some error".to_string()))).unwrap_err();
         let result = format!("{}", error);
         assert!(!result.contains("ERROR"));
+    }
+
+    #[test]
+    fn test_link_input_with_name_and_dir() {
+        let web_dir = PathBuf::from("/tmp/");
+        let web_dir = std::fs::canonicalize(web_dir).unwrap();
+        let (client, path, name) =
+            parse_link_input(Some("name".to_string()), Some(web_dir.clone()));
+        assert_eq!(web_dir, path);
+        let mut target = client.state_dir;
+        target.push("name");
+        assert_eq!(name, target.to_str().unwrap());
+    }
+
+    #[test]
+    fn test_link_input_with_only_name() {
+        let current = std::env::current_dir().unwrap();
+        let (client, path, name) = parse_link_input(Some("name".to_string()), None);
+        let mut target = client.state_dir;
+        target.push("name");
+        assert_eq!(name, target.to_str().unwrap());
+        assert_eq!(path, std::fs::canonicalize(current).unwrap());
+    }
+
+    #[test]
+    fn test_link_input_with_no_input() {
+        let current = std::env::current_dir().unwrap();
+        let the_name = current.file_name().unwrap();
+        let (client, path, name) = parse_link_input(None, None);
+        let mut target = client.state_dir;
+        target.push(the_name);
+        assert_eq!(name, target.to_str().unwrap());
+        assert_eq!(path, std::fs::canonicalize(current).unwrap());
     }
 }

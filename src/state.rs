@@ -61,14 +61,25 @@ impl ServiceType {
         }
     }
 
-    pub fn create(self, path: &PathBuf) -> Result<(), Error> {
-        if path.exists() {
+    pub fn create(self, path: &dyn AsRef<Path>) -> Result<(), Error> {
+        if path.as_ref().exists() {
             return Err(format_err!("refuses to overwrite existing file"));
         }
+        let name = path
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| format_err!("Empty service name"))?;
         match self {
-            ServiceType::StaticFiles(source) => std::os::unix::fs::symlink(source, path)
-                .context("linking web directory")
-                .map_err(Error::from),
+            ServiceType::StaticFiles(source) => {
+                std::os::unix::fs::symlink(&source, path)
+                    .context("linking web directory")
+                    .map_err(Error::from)?;
+                #[allow(clippy::unit_arg)]
+                Ok(info!(
+                    "created static file service: {:?} pointing to {:?}",
+                    &name, &source
+                ))
+            }
             ServiceType::ReverseProxy(addr) => {
                 std::fs::write(
                     &path,
@@ -77,7 +88,12 @@ impl ServiceType {
                         addr.to_string()
                     ),
                 )
-                .context(format!("writing socket address to {:?}", &path))?;
+                .context(format!("writing socket address to {:?}", &path.as_ref()))?;
+                info!(
+                    "created proxy service: {:?} pointing at: {}",
+                    &path.as_ref(),
+                    &addr.to_string(),
+                );
                 Ok(())
             }
             ServiceType::InvalidConfig(_) => Err(format_err!(

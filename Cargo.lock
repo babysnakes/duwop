@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "duwop"
-version = "0.6.0-dev"
+version = "0.6.1-dev"
 dependencies = [
  "assert_fs 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "dialoguer 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",

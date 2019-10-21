@@ -1,6 +1,6 @@
 [package]
 name = "duwop"
-version = "0.6.0-dev"
+version = "0.6.1-dev"
 authors = ["Haim Ashkenazi <haim@babysnakes.org>"]
 edition = "2018"
 license = "MIT"

@@ -88,11 +88,16 @@ enum CliSubCommand {
     /// Add configuration to serve the specified target directory (or the
     /// current directory if none specified) with a web server accessible as
     /// http://<name>.test/. The name should not include the '.test' domain.
+    ///
+    /// Note: both <name> and <source-dir> are optional arguments. If only one
+    /// argument is specified it will be considered as <name>. If both are
+    /// specified the first one will be <name> and the second <source_dir>.
     #[structopt(name = "link", author = "")]
     Link {
-        /// The hostname to serve the directory as
+        /// The hostname to serve the directory as, if omitted the current
+        /// directory name is used
         #[structopt(name = "name")]
-        name: String,
+        name: Option<String>,
 
         /// The directory to serve, if omitted the current directory is used
         #[structopt(name = "source_dir")]
