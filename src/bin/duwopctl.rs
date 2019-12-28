@@ -3,7 +3,6 @@ use duwop::cli_helpers::*;
 use duwop::client::*;
 use duwop::setup;
 
-use dotenv;
 use failure::Error;
 use flexi_logger::{self, style, DeferredNow, LevelFilter, LogSpecBuilder, Logger, Record};
 use log::debug;
@@ -88,11 +87,16 @@ enum CliSubCommand {
     /// Add configuration to serve the specified target directory (or the
     /// current directory if none specified) with a web server accessible as
     /// http://<name>.test/. The name should not include the '.test' domain.
+    ///
+    /// Note: both <name> and <source-dir> are optional arguments. If only one
+    /// argument is specified it will be considered as <name>. If both are
+    /// specified the first one will be <name> and the second <source_dir>.
     #[structopt(name = "link", author = "")]
     Link {
-        /// The hostname to serve the directory as
+        /// The hostname to serve the directory as, if omitted the current
+        /// directory name is used
         #[structopt(name = "name")]
-        name: String,
+        name: Option<String>,
 
         /// The directory to serve, if omitted the current directory is used
         #[structopt(name = "source_dir")]
@@ -114,12 +118,15 @@ enum CliSubCommand {
 
     /// Deletes configuration (serve directory or reverse proxy)
     ///
-    /// Use this command to delete the service by name (wether it's a directory
+    /// Use this command to delete the service by name (whether it's a directory
     /// or reverse proxy). Run 'duwop list' to see available services.
     #[structopt(name = "delete", author = "")]
     Delete {
         /// The name of the service to delete
         name: String,
+        /// Skip deletion confirmation
+        #[structopt(short = "y")]
+        confirm_delete: bool,
     },
 
     /// List available services.
@@ -190,7 +197,6 @@ enum CliSubCommand {
 }
 
 fn main() {
-    dotenv::dotenv().ok();
     let app = Cli::from_args();
     let mut builder = LogSpecBuilder::new();
     if app.quiet {
@@ -229,7 +235,10 @@ fn run(app: Cli) -> Result<(), Error> {
             duwop_client.create_static_file_configuration(name, source)
         }
         CliSubCommand::Proxy { name, port } => duwop_client.create_proxy_configuration(name, port),
-        CliSubCommand::Delete { name } => duwop_client.delete_configuration(name),
+        CliSubCommand::Delete {
+            name,
+            confirm_delete,
+        } => duwop_client.delete_configuration(name, confirm_delete),
         CliSubCommand::List => duwop_client.print_services(),
         CliSubCommand::Doctor => duwop_client.doctor(),
         CliSubCommand::Completion { shell, target_dir } => generate_completions(shell, target_dir),

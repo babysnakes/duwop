@@ -10,7 +10,6 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use dotenv;
 use failure::Error;
 use flexi_logger::{opt_format, Cleanup, Criterion, Logger, Naming};
 use log::{debug, info};
@@ -69,7 +68,6 @@ struct Cli {
 }
 
 fn main() {
-    dotenv::dotenv().ok();
     let app = Cli::from_args();
     match run(app) {
         Ok(_) => {

@@ -2,7 +2,6 @@
 **/*.rs.bk
 /devstate.json
 *.bak
-/.env
 /devdata/
 /devssl/
 /todo.md
