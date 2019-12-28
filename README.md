@@ -71,8 +71,9 @@ Enjoy
 
 ### Development environment setup
 
-* Copy `extra/env-sample` to `.env` in the repository root and edit to your
-  liking.
+* Copy `extra/env-sample` to different name, edit to your liking and source it
+  (optionally use tools like direnv, autoenv.zsh, etc). Make sure the file name
+  you copied it to is ignored.
 * Create a `devdata` directory in the repository root - this will hold the
   development state directory. Use the various `duwopctl` commands (described
   above in the setup instructions) to setup the development state directory,

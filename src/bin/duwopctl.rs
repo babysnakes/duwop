@@ -3,7 +3,6 @@ use duwop::cli_helpers::*;
 use duwop::client::*;
 use duwop::setup;
 
-use dotenv;
 use failure::Error;
 use flexi_logger::{self, style, DeferredNow, LevelFilter, LogSpecBuilder, Logger, Record};
 use log::debug;
@@ -119,7 +118,7 @@ enum CliSubCommand {
 
     /// Deletes configuration (serve directory or reverse proxy)
     ///
-    /// Use this command to delete the service by name (wether it's a directory
+    /// Use this command to delete the service by name (whether it's a directory
     /// or reverse proxy). Run 'duwop list' to see available services.
     #[structopt(name = "delete", author = "")]
     Delete {
@@ -198,7 +197,6 @@ enum CliSubCommand {
 }
 
 fn main() {
-    dotenv::dotenv().ok();
     let app = Cli::from_args();
     let mut builder = LogSpecBuilder::new();
     if app.quiet {
