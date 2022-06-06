@@ -18,7 +18,7 @@ libc = "0.2.55"
 signal-hook = { version = "0.1.10", features = ["tokio-support"] }
 
 hyper = "0.12.28"
-http = "0.1.17"
+http = "0.1.20"
 mime = "0.3.13"
 
 failure = "0.1.5"
