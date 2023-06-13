@@ -6,7 +6,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-tokio = "0.1"
+tokio = "1.18"
 tokio-fs = "0.1"
 tokio-io = "0.1"
 futures = "0.1"
